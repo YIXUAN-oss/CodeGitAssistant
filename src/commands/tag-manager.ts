@@ -13,8 +13,9 @@ export function registerTagManager(
     // 创建标签
     context.subscriptions.push(
         vscode.commands.registerCommand('git-assistant.createTag', async () => {
+            let tagName: string | undefined;
             try {
-                const tagName = await vscode.window.showInputBox({
+                tagName = await vscode.window.showInputBox({
                     prompt: '输入标签名称',
                     placeHolder: 'v1.0.0',
                     validateInput: (value) => {

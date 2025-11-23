@@ -254,7 +254,8 @@ export class GitService {
             throw new Error('无法获取工作区根目录');
         }
         const git = simpleGit(this.workspaceRoot);
-        await git.init();
+        // 使用 -b main 参数直接创建 main 分支，而不是默认的 master
+        await git.raw(['init', '-b', 'main']);
         // 重新初始化git实例
         this.git = simpleGit(this.workspaceRoot);
     }
@@ -635,14 +636,16 @@ export class GitService {
         if (message) {
             // 带注释的标签
             if (commit) {
-                await git.addAnnotatedTag(tagName, message, commit);
+                // 使用 raw 方法创建指向特定提交的带注释标签
+                await git.raw(['tag', '-a', tagName, '-m', message, commit]);
             } else {
                 await git.addAnnotatedTag(tagName, message);
             }
         } else {
             // 轻量级标签
             if (commit) {
-                await git.addTag(tagName, commit);
+                // 使用 raw 方法创建指向特定提交的轻量级标签
+                await git.raw(['tag', tagName, commit]);
             } else {
                 await git.addTag(tagName);
             }

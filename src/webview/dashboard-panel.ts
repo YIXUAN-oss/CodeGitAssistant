@@ -385,6 +385,15 @@ export class DashboardPanel {
         }
     }
 
+    /**
+     * 刷新控制面板数据（公共方法）
+     */
+    public static refresh() {
+        if (DashboardPanel.currentPanel) {
+            DashboardPanel.currentPanel._sendGitData();
+        }
+    }
+
     public dispose() {
         DashboardPanel.currentPanel = undefined;
 
@@ -428,34 +437,124 @@ export class DashboardPanel {
                 return;
             }
 
-            // 获取基础Git数据
-            const status = await this.gitService.getStatus();
-            const branches = await this.gitService.getBranches();
-            const log = await this.gitService.getLog(100);
-            const remotes = await this.gitService.getRemotes();
-            const currentBranch = await this.gitService.getCurrentBranch();
+            // 获取基础Git数据（使用 try-catch 包装每个可能失败的操作）
+            let status: any = null;
+            let branches: any = null;
+            let log: any = { all: [], total: 0, latest: null };
+            let remotes: any[] = [];
+            let currentBranch: string | null = null;
+            let conflicts: string[] = [];
 
-            // 获取冲突信息
-            const conflicts = await this.gitService.getConflicts();
+            try {
+                status = await this.gitService.getStatus();
+            } catch (error) {
+                console.warn('获取状态失败:', error);
+            }
 
-            // 获取新的统计数据
-            const fileStats = await this.gitService.getFileStats(365);
-            const contributorStats = await this.gitService.getContributorStats(365);
-            const branchGraph = await this.gitService.getBranchGraph();
-            const timeline = await this.gitService.getCommitTimeline(365);
+            try {
+                branches = await this.gitService.getBranches();
+            } catch (error) {
+                console.warn('获取分支失败:', error);
+                branches = { all: [], current: null, branches: {} };
+            }
 
-            // 转换数据格式
-            const fileStatsArray = Array.from(fileStats.entries()).map((entry: [string, number]) => ({
-                path: entry[0],
-                count: entry[1]
-            }));
-            const contributorStatsArray = Array.from(contributorStats.entries()).map((entry: [string, { commits: number; files: Set<string> }]) => ({
-                email: entry[0],
-                commits: entry[1].commits,
-                files: entry[1].files.size
-            }));
+            try {
+                log = await this.gitService.getLog(100);
+            } catch (error) {
+                console.warn('获取提交历史失败（可能没有提交）:', error);
+                // 如果没有提交，使用空数据
+                log = { all: [], total: 0, latest: null };
+            }
 
-            // 发送数据到webview
+            try {
+                remotes = await this.gitService.getRemotes();
+            } catch (error) {
+                console.warn('获取远程仓库失败:', error);
+            }
+
+            try {
+                currentBranch = await this.gitService.getCurrentBranch();
+            } catch (error) {
+                console.warn('获取当前分支失败:', error);
+                if (branches && branches.current) {
+                    currentBranch = branches.current;
+                }
+            }
+
+            try {
+                conflicts = await this.gitService.getConflicts();
+            } catch (error) {
+                console.warn('获取冲突信息失败:', error);
+            }
+
+            // 获取新的统计数据（这些可能在没有提交时失败）
+            let fileStatsArray: any[] = [];
+            let contributorStatsArray: any[] = [];
+            let branchGraph: any = { branches: [], merges: [] };
+            let timeline: any[] = [];
+
+            try {
+                const fileStats = await this.gitService.getFileStats(365);
+                fileStatsArray = Array.from(fileStats.entries()).map((entry: [string, number]) => ({
+                    path: entry[0],
+                    count: entry[1]
+                }));
+            } catch (error) {
+                console.warn('获取文件统计失败:', error);
+            }
+
+            try {
+                const contributorStats = await this.gitService.getContributorStats(365);
+                contributorStatsArray = Array.from(contributorStats.entries()).map((entry: [string, { commits: number; files: Set<string> }]) => ({
+                    email: entry[0],
+                    commits: entry[1].commits,
+                    files: entry[1].files.size
+                }));
+            } catch (error) {
+                console.warn('获取贡献者统计失败:', error);
+            }
+
+            try {
+                branchGraph = await this.gitService.getBranchGraph();
+            } catch (error) {
+                console.warn('获取分支图失败:', error);
+                if (branches) {
+                    branchGraph = {
+                        branches: branches.all || [],
+                        merges: [],
+                        currentBranch: currentBranch || branches.current
+                    };
+                }
+            }
+
+            try {
+                const timelineMap = await this.gitService.getCommitTimeline(365);
+                timeline = Array.from(timelineMap.entries()).map((entry: [string, number]) => ({
+                    date: entry[0],
+                    count: entry[1]
+                }));
+            } catch (error) {
+                console.warn('获取时间线失败:', error);
+            }
+
+            // 确保有基本数据
+            if (!status) {
+                status = {
+                    modified: [],
+                    created: [],
+                    deleted: [],
+                    conflicted: [],
+                    not_added: [],
+                    ahead: 0,
+                    behind: 0
+                };
+            }
+
+            if (!branches) {
+                branches = { all: [], current: null, branches: {} };
+            }
+
+            // 发送数据到webview（即使部分数据缺失也要发送，避免一直加载）
             this._panel.webview.postMessage({
                 type: 'gitData',
                 data: {
@@ -464,18 +563,15 @@ export class DashboardPanel {
                     log,
                     remotes,
                     currentBranch,
-                    conflicts, // 添加冲突信息
+                    conflicts,
                     fileStats: fileStatsArray,
                     contributorStats: contributorStatsArray,
                     branchGraph: {
-                        branches: branchGraph.branches,
-                        merges: branchGraph.merges,
-                        currentBranch
+                        branches: branchGraph.branches || [],
+                        merges: branchGraph.merges || [],
+                        currentBranch: currentBranch || branchGraph.currentBranch
                     },
-                    timeline: Array.from(timeline.entries()).map((entry: [string, number]) => ({
-                        date: entry[0],
-                        count: entry[1]
-                    })),
+                    timeline,
                     commandHistory: CommandHistory.getHistory(20),
                     availableCommands: CommandHistory.getAvailableCommands(),
                     categories: CommandHistory.getCommandCategories()
@@ -483,6 +579,25 @@ export class DashboardPanel {
             });
         } catch (error) {
             console.error('Error sending git data:', error);
+            // 即使出错也要发送一个空数据，避免一直加载
+            this._panel.webview.postMessage({
+                type: 'gitData',
+                data: {
+                    status: { modified: [], created: [], deleted: [], conflicted: [], not_added: [], ahead: 0, behind: 0 },
+                    branches: { all: [], current: null, branches: {} },
+                    log: { all: [], total: 0, latest: null },
+                    remotes: [],
+                    currentBranch: null,
+                    conflicts: [],
+                    fileStats: [],
+                    contributorStats: [],
+                    branchGraph: { branches: [], merges: [], currentBranch: null },
+                    timeline: [],
+                    commandHistory: CommandHistory.getHistory(20),
+                    availableCommands: CommandHistory.getAvailableCommands(),
+                    categories: CommandHistory.getCommandCategories()
+                }
+            });
         }
     }
 
@@ -1030,6 +1145,7 @@ export class DashboardPanel {
             <p>点击"开始初始化"后，我们将引导您完成：</p>
             <ul style="margin-top: 10px; padding-left: 20px;">
                 <li>初始化Git仓库（<code>git init</code>）</li>
+                <li>重命名分支为 main（<code>git branch -m main</code>）</li>
                 <li>添加远程仓库（<code>git remote add origin</code>）</li>
                 <li>添加文件到暂存区（<code>git add .</code>）</li>
                 <li>创建初始提交（<code>git commit</code>）</li>

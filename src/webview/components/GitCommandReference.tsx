@@ -294,10 +294,11 @@ export const GitCommandReference: React.FC = () => {
                         outline: 'none'
                     }}
                     value={searchTerm}
-                    onChange={(e) => {
-                        setSearchTerm(e.target.value);
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                        const value = e.target.value;
+                        setSearchTerm(value);
                         // 如果搜索，自动展开匹配的分类
-                        if (e.target.value.trim()) {
+                        if (value.trim()) {
                             const newExpanded = new Set<string>();
                             filteredCategories.forEach(cat => {
                                 newExpanded.add(cat.id);

@@ -1,7 +1,11 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { GitService } from '../services/git-service';
 import { BranchProvider } from '../providers/branch-provider';
 import { HistoryProvider } from '../providers/history-provider';
+import { CommandHistory } from '../utils/command-history';
+import { DashboardPanel } from '../webview/dashboard-panel';
 
 /**
  * 注册仓库初始化相关命令
@@ -19,7 +23,32 @@ export function registerRepositoryInit(
                 // 检查是否已经是Git仓库
                 const isRepo = await gitService.isRepository();
                 if (isRepo) {
-                    vscode.window.showWarningMessage('当前文件夹已经是Git仓库');
+                    // 检查当前分支是否是 master，如果是则提示重命名
+                    try {
+                        const branches = await gitService.getBranches();
+                        const currentBranch = branches.current;
+
+                        if (currentBranch === 'master') {
+                            const rename = await vscode.window.showWarningMessage(
+                                '当前文件夹已经是Git仓库，且当前分支是 master。是否重命名为 main？',
+                                '重命名',
+                                '取消'
+                            );
+
+                            if (rename === '重命名') {
+                                await gitService.renameCurrentBranch('main');
+                                CommandHistory.addCommand('git branch -m main', '重命名分支为 main', true);
+                                vscode.window.showInformationMessage('✅ 分支已重命名为 main');
+                                branchProvider.refresh();
+                                historyProvider.refresh();
+                                DashboardPanel.refresh();
+                            }
+                        } else {
+                            vscode.window.showWarningMessage('当前文件夹已经是Git仓库');
+                        }
+                    } catch (error) {
+                        vscode.window.showWarningMessage('当前文件夹已经是Git仓库');
+                    }
                     return;
                 }
 
@@ -43,28 +72,61 @@ export function registerRepositoryInit(
                         cancellable: false
                     },
                     async (progress) => {
-                        // 1. 初始化仓库
-                        progress.report({ increment: 50, message: '初始化Git仓库...' });
+                        // 1. 初始化仓库（直接创建 main 分支）
+                        progress.report({ increment: 100, message: '初始化Git仓库（创建 main 分支）...' });
                         await gitService.initRepository();
 
-                        // 2. 重命名当前分支为 main（如果当前分支不是 main）
-                        progress.report({ increment: 50, message: '重命名分支为 main...' });
+                        // 初始化后刷新 git 实例以确保获取最新分支信息
+                        gitService.reinitialize();
+
+                        // 验证分支名称（作为后备检查）
                         try {
                             const branches = await gitService.getBranches();
                             const currentBranch = branches.current;
 
-                            // 如果当前分支不是 main，则重命名为 main
+                            // 如果当前分支不是 main（可能是旧版本 Git 或配置问题），则重命名为 main
                             if (currentBranch && currentBranch !== 'main') {
                                 await gitService.renameCurrentBranch('main');
+                                // 记录到命令历史
+                                CommandHistory.addCommand('git branch -m main', '重命名分支为 main', true);
                             }
                         } catch (error) {
-                            // 如果重命名失败，不影响初始化流程，只记录警告
-                            console.warn('重命名分支失败:', error);
+                            // 如果获取分支信息失败，不影响初始化流程，只记录警告
+                            console.warn('验证分支名称失败:', error);
                         }
                     }
                 );
 
                 vscode.window.showInformationMessage('✅ Git仓库初始化成功！');
+
+                // 检查是否有文件可提交
+                try {
+                    const status = await gitService.getStatus();
+                    const hasFiles = status.modified.length > 0 ||
+                        status.created.length > 0 ||
+                        status.not_added.length > 0;
+
+                    if (!hasFiles) {
+                        const createFile = await vscode.window.showWarningMessage(
+                            '当前文件夹为空，没有文件可提交。是否创建 README.md 文件？',
+                            '创建',
+                            '稍后'
+                        );
+
+                        if (createFile === '创建') {
+                            const workspaceRoot = gitService.getWorkspaceRoot();
+                            if (workspaceRoot) {
+                                const readmePath = path.join(workspaceRoot, 'README.md');
+                                if (!fs.existsSync(readmePath)) {
+                                    fs.writeFileSync(readmePath, '# ' + path.basename(workspaceRoot) + '\n\n项目描述\n', 'utf8');
+                                    vscode.window.showInformationMessage('✅ README.md 文件已创建');
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.warn('检查文件状态失败:', error);
+                }
 
                 // 询问是否添加远程仓库
                 const addRemote = await vscode.window.showInformationMessage(
@@ -80,6 +142,8 @@ export function registerRepositoryInit(
                 // 刷新视图
                 branchProvider.refresh();
                 historyProvider.refresh();
+                // 刷新控制面板数据
+                DashboardPanel.refresh();
 
             } catch (error) {
                 vscode.window.showErrorMessage(`初始化失败: ${error}`);
@@ -196,11 +260,33 @@ export function registerRepositoryInit(
                 }
 
                 // 获取仓库状态
-                const status = await gitService.getStatus();
+                let status;
+                try {
+                    status = await gitService.getStatus();
+                } catch (error) {
+                    vscode.window.showErrorMessage(`获取仓库状态失败: ${error}`);
+                    return;
+                }
+
                 const totalFiles = status.modified.length + status.created.length + status.not_added.length;
 
                 if (totalFiles === 0) {
-                    vscode.window.showInformationMessage('没有需要提交的文件');
+                    const createFile = await vscode.window.showWarningMessage(
+                        '当前没有需要提交的文件。是否创建 README.md 文件？',
+                        '创建并提交',
+                        '取消'
+                    );
+
+                    if (createFile === '创建并提交') {
+                        const workspaceRoot = gitService.getWorkspaceRoot();
+                        if (workspaceRoot) {
+                            const readmePath = path.join(workspaceRoot, 'README.md');
+                            if (!fs.existsSync(readmePath)) {
+                                fs.writeFileSync(readmePath, '# ' + path.basename(workspaceRoot) + '\n\n项目描述\n', 'utf8');
+                                vscode.window.showInformationMessage('✅ README.md 文件已创建，请重新执行初始提交');
+                            }
+                        }
+                    }
                     return;
                 }
 
@@ -284,6 +370,8 @@ export function registerRepositoryInit(
                 // 刷新视图
                 branchProvider.refresh();
                 historyProvider.refresh();
+                // 刷新控制面板数据
+                DashboardPanel.refresh();
 
             } catch (error) {
                 if (String(error).includes('已取消')) {

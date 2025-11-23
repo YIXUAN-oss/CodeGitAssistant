@@ -79,6 +79,9 @@
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.2s;
+    min-width: 120px;
+    width: 120px;
+    text-align: center;
 }
 
 .tab-buttons button:hover {
@@ -502,4 +505,7 @@
 
 .tab-buttons button {
     white-space: nowrap;
+    min-width: 120px;
+    width: 120px;
+    text-align: center;
 }

@@ -161,7 +161,7 @@ export const CommitGraph3D: React.FC<{ data: any }> = ({ data }) => {
         // 鼠标移动检测（用于显示tooltip）
         let lastHighlightedNode: THREE.Mesh | null = null;
 
-        const onMouseMoveForTooltip = (e: MouseEvent) => {
+        const onMouseMoveForTooltip = (e: any) => {
             if (isDragging) {
                 setTooltip({ visible: false, x: 0, y: 0, content: '' });
                 // 恢复之前高亮的节点

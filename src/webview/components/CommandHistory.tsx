@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 interface CommandHistoryItem {
     id: string;
@@ -33,19 +33,39 @@ export const CommandHistory: React.FC<{ data: any }> = ({ data }) => {
     const [availableCommands, setAvailableCommands] = useState<Command[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
     const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['init', 'tools']));
+    const [isClearingHistory, setIsClearingHistory] = useState<boolean>(false);
+    const previousHistoryLengthRef = useRef<number>(0);
     const [repositoryState, setRepositoryState] = useState<{
         isRepository: boolean;
         hasCommits: boolean;
         hasConflicts: boolean;
+        hasRemote: boolean;
+        hasUncommittedChanges: boolean;
+        hasUnpushedCommits: boolean;
+        currentBranch: string | null;
     }>({
         isRepository: false,
         hasCommits: false,
-        hasConflicts: false
+        hasConflicts: false,
+        hasRemote: false,
+        hasUncommittedChanges: false,
+        hasUnpushedCommits: false,
+        currentBranch: null
     });
 
     useEffect(() => {
         if (data?.commandHistory) {
+            const currentHistoryLength = data.commandHistory.length;
+            const previousHistoryLength = previousHistoryLengthRef.current;
             setHistory(data.commandHistory);
+
+            // 如果历史已清空（从有到无）且正在清空，则停止加载状态
+            if (currentHistoryLength === 0 && previousHistoryLength > 0 && isClearingHistory) {
+                setIsClearingHistory(false);
+            }
+
+            // 更新历史长度引用
+            previousHistoryLengthRef.current = currentHistoryLength;
         }
         if (data?.availableCommands) {
             setAvailableCommands(data.availableCommands);
@@ -58,13 +78,26 @@ export const CommandHistory: React.FC<{ data: any }> = ({ data }) => {
         const isRepo = data?.status !== undefined;
         const hasCommits = data?.log?.all?.length > 0;
         const hasConflicts = data?.status?.conflicted?.length > 0;
+        const hasRemote = data?.remotes && data.remotes.length > 0;
+        const hasUncommittedChanges = isRepo && data?.status && (
+            (data.status.modified && data.status.modified.length > 0) ||
+            (data.status.created && data.status.created.length > 0) ||
+            (data.status.deleted && data.status.deleted.length > 0) ||
+            (data.status.not_added && data.status.not_added.length > 0)
+        );
+        const hasUnpushedCommits = isRepo && data?.status && data.status.ahead > 0;
+        const currentBranch = data?.currentBranch || data?.branches?.current || null;
 
         setRepositoryState({
             isRepository: isRepo,
             hasCommits,
-            hasConflicts
+            hasConflicts,
+            hasRemote,
+            hasUncommittedChanges,
+            hasUnpushedCommits,
+            currentBranch
         });
-    }, [data]);
+    }, [data, isClearingHistory]);
 
     const formatTime = (timestamp: number) => {
         const date = new Date(timestamp);
@@ -83,6 +116,11 @@ export const CommandHistory: React.FC<{ data: any }> = ({ data }) => {
 
     const executeCommand = (commandId: string) => {
         vscode.postMessage({ command: 'executeCommand', commandId });
+    };
+
+    const handleClearHistory = () => {
+        setIsClearingHistory(true);
+        vscode.postMessage({ command: 'clearHistory' });
     };
 
     const toggleCategory = (categoryId: string) => {
@@ -151,11 +189,62 @@ export const CommandHistory: React.FC<{ data: any }> = ({ data }) => {
                 borderRadius: '6px',
                 fontSize: '13px'
             }}>
-                <strong>📌 当前状态：</strong>
-                {!repositoryState.isRepository && '未初始化 Git 仓库'}
-                {repositoryState.isRepository && !repositoryState.hasCommits && '已初始化，但还没有提交'}
-                {repositoryState.isRepository && repositoryState.hasCommits && '正常使用中'}
-                {repositoryState.hasConflicts && ' ⚠️ 存在合并冲突'}
+                <div style={{ marginBottom: '8px' }}>
+                    <strong>📌 当前状态：</strong>
+                </div>
+                <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px',
+                    fontSize: '12px',
+                    color: 'var(--vscode-descriptionForeground)'
+                }}>
+                    {!repositoryState.isRepository ? (
+                        <div>❌ 未初始化 Git 仓库</div>
+                    ) : (
+                        <>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
+                                <span>✅ 已初始化 Git 仓库</span>
+                                {repositoryState.currentBranch && (
+                                    <span>🌿 当前分支: <strong>{repositoryState.currentBranch}</strong></span>
+                                )}
+                            </div>
+
+                            {!repositoryState.hasCommits ? (
+                                <div>⚠️ 已初始化，但还没有提交到本地仓库</div>
+                            ) : (
+                                <div>✅ 已提交到本地仓库</div>
+                            )}
+
+                            {!repositoryState.hasRemote ? (
+                                <div>⚠️ 未配置远程仓库</div>
+                            ) : (
+                                <div>✅ 已配置远程仓库</div>
+                            )}
+
+                            {repositoryState.hasUncommittedChanges && (
+                                <div>📝 有未提交的更改</div>
+                            )}
+
+                            {repositoryState.hasUnpushedCommits && (
+                                <div>📤 有未推送的提交</div>
+                            )}
+
+                            {repositoryState.hasConflicts && (
+                                <div style={{ color: 'var(--vscode-errorForeground)' }}>⚠️ 存在合并冲突</div>
+                            )}
+
+                            {repositoryState.isRepository &&
+                                repositoryState.hasCommits &&
+                                repositoryState.hasRemote &&
+                                !repositoryState.hasUncommittedChanges &&
+                                !repositoryState.hasUnpushedCommits &&
+                                !repositoryState.hasConflicts && (
+                                    <div style={{ color: 'var(--vscode-textLink-foreground)' }}>✨ 仓库状态正常</div>
+                                )}
+                        </>
+                    )}
+                </div>
             </div>
 
             {/* 分类命令列表 */}
@@ -297,18 +386,40 @@ export const CommandHistory: React.FC<{ data: any }> = ({ data }) => {
                         📜 执行历史
                     </h3>
                     <button
-                        onClick={() => vscode.postMessage({ command: 'clearHistory' })}
+                        onClick={handleClearHistory}
+                        disabled={isClearingHistory}
                         style={{
                             padding: '6px 12px',
-                            background: 'var(--vscode-button-secondaryBackground)',
+                            background: isClearingHistory
+                                ? 'var(--vscode-button-secondaryBackground)'
+                                : 'var(--vscode-button-secondaryBackground)',
                             color: 'var(--vscode-button-secondaryForeground)',
                             border: '1px solid var(--vscode-panel-border)',
                             borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontSize: '12px'
+                            cursor: isClearingHistory ? 'wait' : 'pointer',
+                            fontSize: '12px',
+                            opacity: isClearingHistory ? 0.6 : 1,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px'
                         }}
                     >
-                        清空历史
+                        {isClearingHistory ? (
+                            <>
+                                <span style={{
+                                    display: 'inline-block',
+                                    width: '12px',
+                                    height: '12px',
+                                    border: '2px solid var(--vscode-button-secondaryForeground)',
+                                    borderTopColor: 'transparent',
+                                    borderRadius: '50%',
+                                    animation: 'spin 0.8s linear infinite'
+                                }}></span>
+                                清空中...
+                            </>
+                        ) : (
+                            '清空历史'
+                        )}
                     </button>
                 </div>
 

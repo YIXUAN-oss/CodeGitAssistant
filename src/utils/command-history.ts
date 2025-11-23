@@ -88,7 +88,7 @@ export class CommandHistory {
 
             // ⚙️ 配置仓库 - 需要仓库，但不需要提交
             { id: 'git-assistant.addRemote', name: '添加远程仓库', description: '添加远程仓库地址', icon: '☁️', category: 'setup', requires: 'repository' },
-            { id: 'git-assistant.initialCommit', name: '初始提交', description: '创建初始提交', icon: '📝', category: 'setup', requires: 'repository' },
+            { id: 'git-assistant.initialCommit', name: '初始提交', description: '初始提交到本地仓库', icon: '📝', category: 'setup', requires: 'repository' },
 
             // 🔄 同步操作 - 需要提交
             { id: 'git-assistant.quickPush', name: '快速推送', description: '推送当前分支到远程仓库', icon: '📤', category: 'sync', requires: 'commits' },

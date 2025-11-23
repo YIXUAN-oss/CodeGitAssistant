@@ -14,7 +14,7 @@ import './App.css';
  * 主应用组件
  */
 export const App: React.FC = () => {
-    const [activeTab, setActiveTab] = useState<'graph' | 'graph3d' | 'heatmap' | 'branch-deps' | 'timeline' | 'branches' | 'conflicts' | 'commands' | 'command-ref'>('graph');
+    const [activeTab, setActiveTab] = useState<'graph' | 'graph3d' | 'heatmap' | 'branch-deps' | 'timeline' | 'branches' | 'conflicts' | 'commands' | 'command-ref'>('commands');
     const [gitData, setGitData] = useState<any>(null);
     const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -53,6 +53,36 @@ export const App: React.FC = () => {
                 </div>
                 <div className="tab-buttons">
                     <button
+                        className={activeTab === 'commands' ? 'active' : ''}
+                        onClick={() => setActiveTab('commands')}
+                    >
+                        📋 快捷指令
+                    </button>
+                    <button
+                        className={activeTab === 'command-ref' ? 'active' : ''}
+                        onClick={() => setActiveTab('command-ref')}
+                    >
+                        📚 Git 指令集
+                    </button>
+                    <button
+                        className={activeTab === 'branches' ? 'active' : ''}
+                        onClick={() => setActiveTab('branches')}
+                    >
+                        🌿 分支管理
+                    </button>
+                    <button
+                        className={activeTab === 'branch-deps' ? 'active' : ''}
+                        onClick={() => setActiveTab('branch-deps')}
+                    >
+                        🌳 分支依赖
+                    </button>
+                    <button
+                        className={activeTab === 'conflicts' ? 'active' : ''}
+                        onClick={() => setActiveTab('conflicts')}
+                    >
+                        ⚠️ 冲突解决
+                    </button>
+                    <button
                         className={activeTab === 'graph' ? 'active' : ''}
                         onClick={() => setActiveTab('graph')}
                     >
@@ -65,46 +95,16 @@ export const App: React.FC = () => {
                         🎯 3D 提交图谱
                     </button>
                     <button
-                        className={activeTab === 'heatmap' ? 'active' : ''}
-                        onClick={() => setActiveTab('heatmap')}
-                    >
-                        🔥 热力图
-                    </button>
-                    <button
-                        className={activeTab === 'branch-deps' ? 'active' : ''}
-                        onClick={() => setActiveTab('branch-deps')}
-                    >
-                        🌳 分支依赖
-                    </button>
-                    <button
                         className={activeTab === 'timeline' ? 'active' : ''}
                         onClick={() => setActiveTab('timeline')}
                     >
                         📅 时间线
                     </button>
                     <button
-                        className={activeTab === 'branches' ? 'active' : ''}
-                        onClick={() => setActiveTab('branches')}
+                        className={activeTab === 'heatmap' ? 'active' : ''}
+                        onClick={() => setActiveTab('heatmap')}
                     >
-                        🌿 分支管理
-                    </button>
-                    <button
-                        className={activeTab === 'conflicts' ? 'active' : ''}
-                        onClick={() => setActiveTab('conflicts')}
-                    >
-                        ⚠️ 冲突解决
-                    </button>
-                    <button
-                        className={activeTab === 'commands' ? 'active' : ''}
-                        onClick={() => setActiveTab('commands')}
-                    >
-                        📋 快捷指令
-                    </button>
-                    <button
-                        className={activeTab === 'command-ref' ? 'active' : ''}
-                        onClick={() => setActiveTab('command-ref')}
-                    >
-                        📚 Git指令集
+                        🔥 热力图
                     </button>
                 </div>
             </header>
