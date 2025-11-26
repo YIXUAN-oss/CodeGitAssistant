@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import simpleGit, { SimpleGit, StatusResult, BranchSummary, LogResult } from 'simple-git';
 import * as path from 'path';
+import { MergeHistory } from '../utils/merge-history';
 
 /**
  * Git服务类 - 封装所有Git操作
@@ -132,10 +133,62 @@ export class GitService {
 
     /**
      * 合并分支
+     * @param branchName 要合并的分支名称
+     * @param strategy 合并策略：'fast-forward'（仅快进）或 'three-way'（强制三路）
      */
-    async merge(branchName: string): Promise<void> {
+    async merge(branchName: string, strategy: 'fast-forward' | 'three-way' = 'three-way'): Promise<void> {
         const git = this.ensureGit();
-        await git.merge([branchName]);
+        let targetBranch: string | null = null;
+
+        try {
+            const branchInfo = await git.branch();
+            targetBranch = branchInfo.current || null;
+        } catch {
+            targetBranch = null;
+        }
+
+        if (strategy === 'fast-forward') {
+            // 仅允许快进，保持线性历史
+            await git.merge([branchName, '--ff-only']);
+            await this.recordMergeHistory(branchName, targetBranch, 'fast-forward');
+            return;
+        }
+
+        try {
+            // 强制创建合并提交，确保依赖图能记录
+            await git.merge([branchName, '--no-ff']);
+            await this.recordMergeHistory(branchName, targetBranch, 'three-way');
+        } catch (error: any) {
+            // 某些环境可能不支持 --no-ff，退回普通合并
+            if (error?.message?.includes('--no-ff')) {
+                await git.merge([branchName]);
+                await this.recordMergeHistory(branchName, targetBranch, 'three-way');
+            } else {
+                throw error;
+            }
+        }
+    }
+
+    private async recordMergeHistory(fromBranch: string, toBranch: string | null, type: 'three-way' | 'fast-forward') {
+        if (!toBranch) {
+            return;
+        }
+        try {
+            const git = this.ensureGit();
+            const commitHash = (await git.raw(['rev-parse', toBranch])).trim();
+            if (!commitHash) {
+                return;
+            }
+            MergeHistory.recordMerge({
+                from: fromBranch,
+                to: toBranch,
+                commit: commitHash,
+                type,
+                description: `${type === 'fast-forward' ? '快速合并' : '三路合并'}：${fromBranch} → ${toBranch}`
+            });
+        } catch (error) {
+            console.warn('记录合并历史失败:', error);
+        }
     }
 
     /**
@@ -291,6 +344,25 @@ export class GitService {
     async removeRemote(name: string): Promise<void> {
         const git = this.ensureGit();
         await git.removeRemote(name);
+    }
+
+    /**
+     * 重命名远程仓库
+     */
+    async renameRemote(oldName: string, newName: string): Promise<void> {
+        const git = this.ensureGit();
+        await git.raw(['remote', 'rename', oldName, newName]);
+    }
+
+    /**
+     * 更新远程仓库地址（同时更新 fetch/push）
+     */
+    async updateRemoteUrl(name: string, url: string): Promise<void> {
+        const git = this.ensureGit();
+        // 更新 fetch URL
+        await git.raw(['remote', 'set-url', name, url]);
+        // 更新 push URL（确保 fetch/push 一致）
+        await git.raw(['remote', 'set-url', '--push', name, url]);
     }
 
     /**
@@ -476,62 +548,306 @@ export class GitService {
     /**
      * 获取分支关系图数据
      */
-    async getBranchGraph(): Promise<{ branches: string[]; merges: Array<{ from: string; to: string; commit: string }> }> {
+    async getBranchGraph(): Promise<{ branches: string[]; merges: Array<{ from: string; to: string; commit: string; type: 'three-way' | 'fast-forward'; description?: string; timestamp?: number }>; currentBranch?: string }> {
         const git = this.ensureGit();
-        const merges: Array<{ from: string; to: string; commit: string }> = [];
+        const merges: Array<{ from: string; to: string; commit: string; type: 'three-way' | 'fast-forward'; description?: string; timestamp?: number }> = [];
 
         try {
+            // 获取所有分支
             const branches = await git.branch();
+            const allBranches = branches.all.filter(b => !b.startsWith('remotes/')); // 只使用本地分支
             const currentBranch = branches.current || 'main';
 
-            const log = await git.log({
-                '--merges': null,
-                maxCount: 100
-            });
+            // 方法1: 检查合并提交（真正的合并，有多个父提交）
+            try {
+                const mergeLog = await git.log({
+                    '--merges': null,
+                    maxCount: 100
+                });
 
-            for (const commit of log.all) {
-                // 解析合并提交信息
-                const message = commit.message || '';
-                const mergeMatch = message.match(/Merge (?:branch|commit) ['"](.+?)['"]/);
-                if (mergeMatch) {
-                    const fromBranch = mergeMatch[1];
-                    // 尝试获取合并时的目标分支
+                // 用于缓存每个提交属于哪些分支
+                const commitToBranchesCache = new Map<string, string[]>();
+
+                // 辅助函数：获取提交所属的分支列表
+                const getBranchesContainingCommit = async (commitHash: string): Promise<string[]> => {
+                    if (commitToBranchesCache.has(commitHash)) {
+                        return commitToBranchesCache.get(commitHash)!;
+                    }
+
+                    const branchesContaining: string[] = [];
+                    for (const branch of allBranches) {
+                        try {
+                            // 使用 --merged 检查分支是否包含该提交
+                            const result = await git.raw(['branch', '--contains', commitHash]);
+                            if (result.trim().split('\n').some(line => line.trim() === branch || line.trim().includes(branch))) {
+                                branchesContaining.push(branch);
+                            }
+                        } catch {
+                            // 跳过错误
+                        }
+                    }
+
+                    commitToBranchesCache.set(commitHash, branchesContaining);
+                    return branchesContaining;
+                };
+
+                // 处理每个合并提交
+                for (const commit of mergeLog.all) {
                     try {
-                        const showResult = await git.show([commit.hash, '--format=%P', '--no-patch']);
-                        const parents = showResult.trim().split(' ');
-                        if (parents.length >= 2) {
-                            // 获取第二个父提交的分支
-                            const branchInfo = await git.branch(['--contains', parents[1]]);
-                            const targetBranch = branchInfo.all.find(b => b !== fromBranch) || currentBranch;
-                            merges.push({
-                                from: fromBranch,
-                                to: targetBranch,
-                                commit: commit.hash
-                            });
-                        } else {
-                            merges.push({
-                                from: fromBranch,
-                                to: currentBranch,
-                                commit: commit.hash
-                            });
+                        // 获取合并提交的父提交列表
+                        const parentResult = await git.raw(['rev-list', '--parents', '-n', '1', commit.hash]);
+                        const parts = parentResult.trim().split(/\s+/);
+
+                        if (parts.length < 3) {
+                            continue; // 不是有效的合并提交
+                        }
+
+                        const mergeCommitHash = parts[0];
+                        const firstParent = parts[1]; // 第一个父提交（目标分支的HEAD）
+                        const secondParent = parts[2]; // 第二个父提交（被合并分支的HEAD）
+
+                        // 获取合并提交本身所在的分支（通常是目标分支）
+                        const mergeCommitBranches = await getBranchesContainingCommit(mergeCommitHash);
+
+                        // 获取每个父提交所属的分支
+                        const firstParentBranches = await getBranchesContainingCommit(firstParent);
+                        const secondParentBranches = await getBranchesContainingCommit(secondParent);
+
+                        // 找出目标分支：合并提交所在的分支中，第一个父提交也在的分支
+                        const toBranchCandidates = mergeCommitBranches.filter(b =>
+                            firstParentBranches.includes(b) && !secondParentBranches.includes(b)
+                        );
+
+                        // 找出被合并的分支：第二个父提交在但第一个父提交不在的分支
+                        const fromBranchCandidates = secondParentBranches.filter(b =>
+                            !firstParentBranches.includes(b) || (mergeCommitBranches.includes(b) && !toBranchCandidates.includes(b))
+                        );
+
+                        let toBranch: string | null = null;
+                        let fromBranch: string | null = null;
+
+                        // 优先选择当前分支作为目标分支
+                        if (toBranchCandidates.includes(currentBranch)) {
+                            toBranch = currentBranch;
+                        } else if (toBranchCandidates.length > 0) {
+                            toBranch = toBranchCandidates[0];
+                        } else if (mergeCommitBranches.length > 0) {
+                            // 如果找不到明确的目标，使用合并提交所在的分支
+                            toBranch = mergeCommitBranches.includes(currentBranch) ? currentBranch : mergeCommitBranches[0];
+                        }
+
+                        // 选择被合并的分支
+                        if (fromBranchCandidates.length > 0) {
+                            fromBranch = fromBranchCandidates[0];
+                        }
+
+                        // 如果找到了有效的合并关系，记录它
+                        if (fromBranch && toBranch && fromBranch !== toBranch) {
+                            const commitTimestamp = commit.date ? new Date(commit.date).getTime() : Date.now();
+                            const description = `三路合并：${fromBranch} → ${toBranch}`;
+                            const existingIndex = merges.findIndex(m =>
+                                m.from === fromBranch && m.to === toBranch
+                            );
+
+                            if (existingIndex >= 0) {
+                                merges[existingIndex] = {
+                                    from: fromBranch,
+                                    to: toBranch,
+                                    commit: mergeCommitHash,
+                                    type: 'three-way',
+                                    description,
+                                    timestamp: commitTimestamp
+                                };
+                            } else {
+                                merges.push({
+                                    from: fromBranch,
+                                    to: toBranch,
+                                    commit: mergeCommitHash,
+                                    type: 'three-way',
+                                    description,
+                                    timestamp: commitTimestamp
+                                });
+                            }
                         }
                     } catch (error) {
-                        merges.push({
-                            from: fromBranch,
-                            to: currentBranch,
-                            commit: commit.hash
-                        });
+                        // 如果处理某个提交失败，继续处理下一个
+                        console.warn(`Error processing merge commit ${commit.hash}:`, error);
+                        continue;
                     }
                 }
+            } catch (error) {
+                console.warn('Error getting merge commits:', error);
             }
+
+            // 方法2: 检查分支之间的合并关系（包括快进合并和未检测到的合并）
+            // 通过检查每个分支是否包含其他分支的最新提交来判断合并关系
+            try {
+                // 获取每个分支的最新提交
+                const branchHeads = new Map<string, { hash: string; timestamp?: number }>();
+                for (const branch of allBranches) {
+                    try {
+                        const log = await git.log([branch, '-1']);
+                        if (log.all.length > 0) {
+                            branchHeads.set(branch, {
+                                hash: log.all[0].hash,
+                                timestamp: log.all[0].date ? new Date(log.all[0].date).getTime() : undefined
+                            });
+                        }
+                    } catch {
+                        // 跳过无法获取的分支
+                    }
+                }
+
+                // 检查分支之间的合并关系
+                for (const [branchA, headInfoA] of branchHeads.entries()) {
+                    for (const [branchB, headInfoB] of branchHeads.entries()) {
+                        if (branchA === branchB) continue;
+                        const headA = headInfoA.hash;
+                        const headB = headInfoB.hash;
+                        const headBTimestamp = headInfoB.timestamp;
+
+                        try {
+                            // 检查是否已经记录了这个合并关系
+                            const existingIndex = merges.findIndex(m => m.from === branchB && m.to === branchA);
+                            if (existingIndex >= 0 && merges[existingIndex].type === 'three-way') {
+                                continue;
+                            }
+
+                            // 检查分支A是否包含分支B的最新提交
+                            // 使用 git merge-base 来检查两个分支的关系
+                            const mergeBase = await git.raw(['merge-base', branchA, branchB]);
+                            if (!mergeBase.trim()) continue;
+
+                            // 检查分支A是否包含分支B的HEAD（更直接的方法）
+                            const containsResult = await git.raw(['branch', '--contains', headB]);
+                            const branchAContainsB = containsResult.includes(branchA) || containsResult.includes(`* ${branchA}`);
+
+                            if (branchAContainsB && headB !== headA) {
+                                let mergeType: 'three-way' | 'fast-forward' = 'fast-forward';
+                                let mergeCommitHash = headB; // 默认使用分支B的HEAD
+                                let mergeTimestamp: number | undefined = headBTimestamp;
+
+                                // 检查是否有明确的合并提交
+                                try {
+                                    // 查找从merge-base到branchA之间的合并提交
+                                    const mergeCommits = await git.raw([
+                                        'log',
+                                        '--merges',
+                                        '--ancestry-path',
+                                        '--format=%H',
+                                        `${mergeBase.trim()}..${branchA}`
+                                    ]);
+
+                                    if (mergeCommits.trim()) {
+                                        // 找到合并提交，检查它的父提交是否包含分支B
+                                        const mergeHashes = mergeCommits.trim().split('\n');
+                                        for (const mergeHash of mergeHashes) {
+                                            try {
+                                                const parents = await git.raw(['rev-list', '--parents', '-n', '1', mergeHash]);
+                                                const parentParts = parents.trim().split(/\s+/);
+                                                if (parentParts.length >= 3) {
+                                                    const secondParent = parentParts[2];
+                                                    // 检查第二个父提交是否属于分支B
+                                                    const secondParentBranches = await git.raw(['branch', '--contains', secondParent]);
+                                                    if (secondParentBranches.includes(branchB)) {
+                                                        mergeCommitHash = mergeHash;
+                                                        mergeType = 'three-way';
+                                                        try {
+                                                            const tsOutput = await git.raw(['show', '-s', '--format=%ct', mergeHash]);
+                                                            const seconds = parseInt(tsOutput.trim(), 10);
+                                                            if (!Number.isNaN(seconds)) {
+                                                                mergeTimestamp = seconds * 1000;
+                                                            }
+                                                        } catch {
+                                                            mergeTimestamp = headBTimestamp;
+                                                        }
+                                                        break;
+                                                    }
+                                                }
+                                            } catch {
+                                                // 继续检查下一个合并提交
+                                            }
+                                        }
+                                    }
+
+                                    const currentRecord = {
+                                        from: branchB,
+                                        to: branchA,
+                                        commit: mergeCommitHash,
+                                        type: mergeType,
+                                        description: `${mergeType === 'three-way' ? '三路合并' : '快速合并（推断）'}：${branchB} → ${branchA}`,
+                                        timestamp: mergeTimestamp ?? headBTimestamp ?? Date.now()
+                                    } as { from: string; to: string; commit: string; type: 'three-way' | 'fast-forward'; description?: string; timestamp?: number };
+
+                                    if (existingIndex >= 0) {
+                                        merges[existingIndex] = currentRecord;
+                                    } else {
+                                        merges.push(currentRecord);
+                                    }
+                                } catch {
+                                    // 如果查找合并提交失败，仍然记录快进关系
+                                    if (existingIndex >= 0) {
+                                        merges[existingIndex] = {
+                                            from: branchB,
+                                            to: branchA,
+                                            commit: headB,
+                                            type: merges[existingIndex].type,
+                                            description: merges[existingIndex].description || `快速合并（推断）：${branchB} → ${branchA}`,
+                                            timestamp: merges[existingIndex].timestamp ?? headBTimestamp ?? Date.now()
+                                        };
+                                    } else {
+                                        merges.push({
+                                            from: branchB,
+                                            to: branchA,
+                                            commit: headB,
+                                            type: 'fast-forward',
+                                            description: `快速合并（推断）：${branchB} → ${branchA}`,
+                                            timestamp: headBTimestamp ?? Date.now()
+                                        });
+                                    }
+                                }
+                            }
+                        } catch (error) {
+                            // 跳过错误，继续检查下一个分支对
+                            continue;
+                        }
+                    }
+                }
+            } catch (error) {
+                console.warn('Error checking branch merge relationships:', error);
+            }
+
+            // 合并历史中记录的关系（弥补快进合并无法识别的问题）
+            try {
+                const recorded = MergeHistory.getHistory();
+                for (const item of recorded) {
+                    if (!allBranches.includes(item.from) || !allBranches.includes(item.to)) {
+                        continue;
+                    }
+                    const existingIndex = merges.findIndex(m => m.from === item.from && m.to === item.to);
+                    if (existingIndex >= 0) {
+                        if (merges[existingIndex].type === 'fast-forward' && item.type === 'three-way') {
+                            merges[existingIndex] = item;
+                        }
+                    } else {
+                        merges.push(item);
+                    }
+                }
+            } catch (error) {
+                console.warn('读取合并历史失败:', error);
+            }
+
         } catch (error) {
+            console.error('Error getting branch graph:', error);
             // 如果无法获取，返回空数组
         }
 
-        const branches = await git.branch();
+        // 再次获取分支列表（确保获取最新）
+        const finalBranches = await git.branch();
         return {
-            branches: branches.all,
-            merges
+            branches: finalBranches.all,
+            merges,
+            currentBranch: finalBranches.current
         };
     }
 
@@ -594,66 +910,33 @@ export class GitService {
     async getTags(): Promise<Array<{ name: string; commit: string; message?: string; date?: string }>> {
         const git = this.ensureGit();
         try {
-            const tagsOutput = await git.raw(['tag', '-l', '--sort=-creatordate']);
+            const tagsOutput = await git.raw([
+                'for-each-ref',
+                'refs/tags',
+                '--sort=-creatordate',
+                '--format=%(refname:short)|%(objectname)|%(objecttype)|%(contents:subject)|%(creatordate:iso)'
+            ]);
+
             if (!tagsOutput || !tagsOutput.trim()) {
                 return [];
             }
 
-            const tagNames = tagsOutput.trim().split('\n').filter(name => name.trim());
-            const tags: Array<{ name: string; commit: string; message?: string; date?: string }> = [];
-
-            for (const tagName of tagNames) {
-                try {
-                    // 获取标签指向的提交
-                    const commit = await git.raw(['rev-list', '-n', '1', tagName]);
-                    const commitHash = commit.trim();
-
-                    // 检查标签类型：轻量化标签指向 commit，带注释标签是 tag 对象
-                    try {
-                        // 获取标签对象的类型
-                        const objectType = await git.raw(['cat-file', '-t', tagName]);
-                        const isAnnotatedTag = objectType.trim() === 'tag';
-
-                        if (isAnnotatedTag) {
-                            // 只对带注释标签提取注释信息
-                            const tagInfo = await git.raw(['tag', '-l', '--format=%(refname:short)|%(objectname)|%(contents:subject)|%(creatordate:iso)', tagName]);
-                            const parts = tagInfo.trim().split('|');
-                            if (parts.length >= 4) {
-                                // 只有当 message 非空时才设置
-                                const message = parts[2]?.trim();
-                                tags.push({
-                                    name: parts[0] || tagName,
-                                    commit: parts[1] || commitHash,
-                                    message: message || undefined,
-                                    date: parts[3] || undefined
-                                });
-                            } else {
-                                tags.push({
-                                    name: tagName,
-                                    commit: commitHash
-                                });
-                            }
-                        } else {
-                            // 轻量化标签：不包含注释信息
-                            tags.push({
-                                name: tagName,
-                                commit: commitHash
-                            });
-                        }
-                    } catch {
-                        // 如果获取标签信息失败，使用基本信息（作为轻量化标签处理）
-                        tags.push({
-                            name: tagName,
-                            commit: commitHash
-                        });
-                    }
-                } catch (error) {
-                    // 如果获取标签信息失败，跳过该标签
-                    console.error(`Failed to get tag info for ${tagName}:`, error);
-                }
-            }
-
-            return tags;
+            return tagsOutput
+                .trim()
+                .split('\n')
+                .filter(line => !!line.trim())
+                .map((line) => {
+                    const [name, objectName, objectType, subject, date] = line.split('|');
+                    const cleanMessage = subject?.trim();
+                    const isAnnotated = (objectType || '').trim() === 'tag';
+                    return {
+                        name: name?.trim() || '',
+                        commit: (objectName || '').trim(),
+                        message: isAnnotated && cleanMessage ? cleanMessage : undefined,
+                        date: date?.trim() || undefined
+                    };
+                })
+                .filter(tag => tag.name && tag.commit);
         } catch (error) {
             console.error('Error getting tags:', error);
             return [];

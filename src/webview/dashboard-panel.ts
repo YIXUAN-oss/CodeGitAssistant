@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { GitService } from '../services/git-service';
 import { CommandHistory } from '../utils/command-history';
 
@@ -123,6 +124,12 @@ export class DashboardPanel {
                         case 'addRemote':
                             await this._executeCommand('git-assistant.addRemote');
                             break;
+                        case 'editRemote':
+                            await this._handleEditRemote(message.remote);
+                            break;
+                        case 'deleteRemote':
+                            await this._handleDeleteRemote(message.remote);
+                            break;
                         case 'resolveConflict':
                             await this._resolveConflict(message.file, message.action);
                             break;
@@ -229,8 +236,28 @@ export class DashboardPanel {
                 return;
             }
 
+            const strategyPick = await vscode.window.showQuickPick(
+                [
+                    {
+                        label: '⚡ 快速合并 (fast-forward)',
+                        description: '保持线性历史，仅在可快进时成功',
+                        value: 'fast-forward'
+                    },
+                    {
+                        label: '🔀 三路合并 (三方合并提交)',
+                        description: '创建合并提交，保留分支结构',
+                        value: 'three-way'
+                    }
+                ],
+                { placeHolder: '选择合并策略' }
+            );
+
+            if (!strategyPick) {
+                return;
+            }
+
             const confirm = await vscode.window.showWarningMessage(
-                `确定要将 "${branchName}" 合并到 "${currentBranch}" 吗？`,
+                `确定要将 "${branchName}" 以"${strategyPick.label}"合并到 "${currentBranch}" 吗？`,
                 { modal: true },
                 '合并',
                 '取消'
@@ -247,13 +274,17 @@ export class DashboardPanel {
                     cancellable: false
                 },
                 async () => {
-                    await this.gitService.merge(branchName);
+                    await this.gitService.merge(branchName, strategyPick.value === 'fast-forward' ? 'fast-forward' : 'three-way');
+                    // 等待一小段时间，确保 Git 合并操作完成
+                    await new Promise(resolve => setTimeout(resolve, 300));
                 }
             );
 
             vscode.window.showInformationMessage(
-                `✅ 分支 "${branchName}" 已成功合并到 "${currentBranch}"`
+                `✅ 分支 "${branchName}" 已通过${strategyPick.value === 'fast-forward' ? '快速合并' : '三路合并'}合并到 "${currentBranch}"`
             );
+            // 延迟一点再刷新，确保 Git 数据已经更新
+            await new Promise(resolve => setTimeout(resolve, 200));
             await this._sendGitData();
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -431,116 +462,39 @@ export class DashboardPanel {
                 return;
             }
 
-            // 获取基础Git数据（使用 try-catch 包装每个可能失败的操作）
-            let status: any = null;
-            let branches: any = null;
-            let log: any = { all: [], total: 0, latest: null };
-            let remotes: any[] = [];
-            let currentBranch: string | null = null;
-            let conflicts: string[] = [];
-            let tags: any[] = [];
+            const workspaceRoot = this.gitService.getWorkspaceRoot();
+            const repositoryInfo = workspaceRoot ? {
+                path: workspaceRoot,
+                name: path.basename(workspaceRoot)
+            } : null;
 
-            try {
-                status = await this.gitService.getStatus();
-            } catch (error) {
-                console.warn('获取状态失败:', error);
-            }
+            const [
+                statusResult,
+                branchesResult,
+                logResult,
+                remotesResult,
+                conflictsResult,
+                tagsResult,
+                fileStatsResult,
+                contributorStatsResult,
+                branchGraphResult,
+                timelineResult
+            ] = await Promise.allSettled([
+                this.gitService.getStatus(),
+                this.gitService.getBranches(),
+                this.gitService.getLog(100),
+                this.gitService.getRemotes(),
+                this.gitService.getConflicts(),
+                this.gitService.getTags(),
+                this.gitService.getFileStats(365),
+                this.gitService.getContributorStats(365),
+                this.gitService.getBranchGraph(),
+                this.gitService.getCommitTimeline(365)
+            ]);
 
-            try {
-                branches = await this.gitService.getBranches();
-            } catch (error) {
-                console.warn('获取分支失败:', error);
-                branches = { all: [], current: null, branches: {} };
-            }
-
-            try {
-                log = await this.gitService.getLog(100);
-            } catch (error) {
-                console.warn('获取提交历史失败（可能没有提交）:', error);
-                // 如果没有提交，使用空数据
-                log = { all: [], total: 0, latest: null };
-            }
-
-            try {
-                remotes = await this.gitService.getRemotes();
-            } catch (error) {
-                console.warn('获取远程仓库失败:', error);
-            }
-
-            try {
-                currentBranch = await this.gitService.getCurrentBranch();
-            } catch (error) {
-                console.warn('获取当前分支失败:', error);
-                if (branches && branches.current) {
-                    currentBranch = branches.current;
-                }
-            }
-
-            try {
-                conflicts = await this.gitService.getConflicts();
-            } catch (error) {
-                console.warn('获取冲突信息失败:', error);
-            }
-
-            try {
-                tags = await this.gitService.getTags();
-            } catch (error) {
-                console.warn('获取标签失败:', error);
-            }
-
-            // 获取新的统计数据（这些可能在没有提交时失败）
-            let fileStatsArray: any[] = [];
-            let contributorStatsArray: any[] = [];
-            let branchGraph: any = { branches: [], merges: [] };
-            let timeline: any[] = [];
-
-            try {
-                const fileStats = await this.gitService.getFileStats(365);
-                fileStatsArray = Array.from(fileStats.entries()).map((entry: [string, number]) => ({
-                    path: entry[0],
-                    count: entry[1]
-                }));
-            } catch (error) {
-                console.warn('获取文件统计失败:', error);
-            }
-
-            try {
-                const contributorStats = await this.gitService.getContributorStats(365);
-                contributorStatsArray = Array.from(contributorStats.entries()).map((entry: [string, { commits: number; files: Set<string> }]) => ({
-                    email: entry[0],
-                    commits: entry[1].commits,
-                    files: entry[1].files.size
-                }));
-            } catch (error) {
-                console.warn('获取贡献者统计失败:', error);
-            }
-
-            try {
-                branchGraph = await this.gitService.getBranchGraph();
-            } catch (error) {
-                console.warn('获取分支图失败:', error);
-                if (branches) {
-                    branchGraph = {
-                        branches: branches.all || [],
-                        merges: [],
-                        currentBranch: currentBranch || branches.current
-                    };
-                }
-            }
-
-            try {
-                const timelineMap = await this.gitService.getCommitTimeline(365);
-                timeline = Array.from(timelineMap.entries()).map((entry: [string, number]) => ({
-                    date: entry[0],
-                    count: entry[1]
-                }));
-            } catch (error) {
-                console.warn('获取时间线失败:', error);
-            }
-
-            // 确保有基本数据
-            if (!status) {
-                status = {
+            const status = statusResult.status === 'fulfilled'
+                ? statusResult.value
+                : {
                     modified: [],
                     created: [],
                     deleted: [],
@@ -549,13 +503,50 @@ export class DashboardPanel {
                     ahead: 0,
                     behind: 0
                 };
-            }
 
-            if (!branches) {
-                branches = { all: [], current: null, branches: {} };
-            }
+            const branches = branchesResult.status === 'fulfilled'
+                ? branchesResult.value
+                : { all: [], current: null, branches: {} };
 
-            // 发送数据到webview（即使部分数据缺失也要发送，避免一直加载）
+            const log = logResult.status === 'fulfilled'
+                ? logResult.value
+                : { all: [], total: 0, latest: null };
+
+            const remotes = remotesResult.status === 'fulfilled' ? remotesResult.value : [];
+            const currentBranch = branches.current || null;
+            const conflicts = conflictsResult.status === 'fulfilled' ? conflictsResult.value : [];
+            const tags = tagsResult.status === 'fulfilled' ? tagsResult.value : [];
+
+            const fileStatsArray = fileStatsResult.status === 'fulfilled'
+                ? Array.from(fileStatsResult.value.entries()).map((entry: [string, number]) => ({
+                    path: entry[0],
+                    count: entry[1]
+                }))
+                : [];
+
+            const contributorStatsArray = contributorStatsResult.status === 'fulfilled'
+                ? Array.from(contributorStatsResult.value.entries()).map((entry: [string, { commits: number; files: Set<string> }]) => ({
+                    email: entry[0],
+                    commits: entry[1].commits,
+                    files: entry[1].files.size
+                }))
+                : [];
+
+            const resolvedBranchGraph = branchGraphResult.status === 'fulfilled'
+                ? branchGraphResult.value
+                : {
+                    branches: branches.all || [],
+                    merges: [],
+                    currentBranch
+                };
+
+            const timeline = timelineResult.status === 'fulfilled'
+                ? Array.from(timelineResult.value.entries()).map((entry: [string, number]) => ({
+                    date: entry[0],
+                    count: entry[1]
+                }))
+                : [];
+
             this._panel.webview.postMessage({
                 type: 'gitData',
                 data: {
@@ -568,12 +559,13 @@ export class DashboardPanel {
                     fileStats: fileStatsArray,
                     contributorStats: contributorStatsArray,
                     branchGraph: {
-                        branches: branchGraph.branches || [],
-                        merges: branchGraph.merges || [],
-                        currentBranch: currentBranch || branchGraph.currentBranch
+                        branches: resolvedBranchGraph.branches || [],
+                        merges: resolvedBranchGraph.merges || [],
+                        currentBranch: resolvedBranchGraph.currentBranch || currentBranch
                     },
                     timeline,
                     tags,
+                    repository: repositoryInfo,
                     commandHistory: CommandHistory.getHistory(20),
                     availableCommands: CommandHistory.getAvailableCommands(),
                     categories: CommandHistory.getCommandCategories()
@@ -596,6 +588,7 @@ export class DashboardPanel {
                     branchGraph: { branches: [], merges: [], currentBranch: null },
                     timeline: [],
                     tags: [],
+                    repository: null,
                     commandHistory: CommandHistory.getHistory(20),
                     availableCommands: CommandHistory.getAvailableCommands(),
                     categories: CommandHistory.getCommandCategories()
@@ -773,6 +766,119 @@ export class DashboardPanel {
             } else {
                 vscode.window.showErrorMessage(`推送标签失败: ${errorMessage}`);
             }
+            await this._sendGitData();
+        }
+    }
+
+    /**
+     * 编辑远程仓库
+     */
+    private async _handleEditRemote(remoteName: string) {
+        try {
+            if (!remoteName) {
+                vscode.window.showErrorMessage('远程仓库名称不能为空');
+                return;
+            }
+
+            const remotes = await this.gitService.getRemotes();
+            const target = remotes.find((remote) => remote.name === remoteName);
+
+            if (!target) {
+                vscode.window.showWarningMessage(`未找到远程仓库 "${remoteName}"`);
+                return;
+            }
+
+            const newName = await vscode.window.showInputBox({
+                prompt: '输入新的远程仓库名称',
+                value: remoteName,
+                validateInput: (value) => {
+                    if (!value) {
+                        return '远程仓库名称不能为空';
+                    }
+                    if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
+                        return '名称只能包含字母、数字、下划线和横线';
+                    }
+                    return null;
+                }
+            });
+
+            if (!newName) {
+                return;
+            }
+
+            const currentUrl = target.refs?.fetch || target.refs?.push || '';
+            const newUrl = await vscode.window.showInputBox({
+                prompt: '输入新的远程仓库地址',
+                placeHolder: 'https://github.com/username/repo.git',
+                value: currentUrl,
+                validateInput: (value) => {
+                    if (!value) {
+                        return '远程仓库地址不能为空';
+                    }
+                    if (!value.includes('http') && !value.includes('git@')) {
+                        return '请输入有效的Git仓库地址';
+                    }
+                    return null;
+                }
+            });
+
+            if (!newUrl) {
+                return;
+            }
+
+            let updated = false;
+            if (newName !== remoteName) {
+                await this.gitService.renameRemote(remoteName, newName);
+                remoteName = newName;
+                updated = true;
+            }
+
+            if (newUrl !== currentUrl) {
+                await this.gitService.updateRemoteUrl(remoteName, newUrl);
+                updated = true;
+            }
+
+            if (updated) {
+                vscode.window.showInformationMessage(`✅ 远程仓库 "${remoteName}" 已更新`);
+            } else {
+                vscode.window.showInformationMessage('未检测到更改，远程仓库保持不变');
+            }
+
+            await this._sendGitData();
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(`编辑远程仓库失败: ${errorMessage}`);
+            await this._sendGitData();
+        }
+    }
+
+    /**
+     * 删除远程仓库
+     */
+    private async _handleDeleteRemote(remoteName: string) {
+        try {
+            if (!remoteName) {
+                vscode.window.showErrorMessage('远程仓库名称不能为空');
+                return;
+            }
+
+            const confirm = await vscode.window.showWarningMessage(
+                `确定要删除远程仓库 "${remoteName}" 吗？此操作会移除所有与其相关的推送/拉取配置。`,
+                { modal: true },
+                '删除',
+                '取消'
+            );
+
+            if (confirm !== '删除') {
+                return;
+            }
+
+            await this.gitService.removeRemote(remoteName);
+            vscode.window.showInformationMessage(`✅ 远程仓库 "${remoteName}" 已删除`);
+            await this._sendGitData();
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(`删除远程仓库失败: ${errorMessage}`);
             await this._sendGitData();
         }
     }

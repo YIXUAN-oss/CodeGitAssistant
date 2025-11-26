@@ -43,6 +43,7 @@ interface CommandHistoryItem {
     timestamp: number;
     success: boolean;
     error?: string;
+    remote?: string; // 远程仓库名称
 }
 
 interface Command {
@@ -576,10 +577,23 @@ export const CommandHistory: React.FC<{ data: any }> = ({ data }) => {
                                         fontSize: '11px',
                                         color: 'var(--vscode-descriptionForeground)',
                                         fontFamily: 'monospace',
-                                        marginBottom: item.error ? '4px' : '0'
+                                        marginBottom: (item.error || item.remote) ? '4px' : '0'
                                     }}>
                                         {item.command}
                                     </div>
+                                    {item.remote && (
+                                        <div style={{
+                                            fontSize: '11px',
+                                            color: 'var(--vscode-textLink-foreground)',
+                                            marginTop: '4px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '4px'
+                                        }}>
+                                            <span>☁️</span>
+                                            <span>远程: {item.remote}</span>
+                                        </div>
+                                    )}
                                     {item.error && (
                                         <div style={{
                                             fontSize: '11px',

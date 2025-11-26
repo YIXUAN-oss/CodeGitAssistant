@@ -7,6 +7,7 @@ export interface CommandHistoryItem {
     timestamp: number;
     success: boolean;
     error?: string;
+    remote?: string; // 远程仓库名称（用于推送、拉取、推送标签等操作）
 }
 
 /**
@@ -31,15 +32,21 @@ export class CommandHistory {
 
     /**
      * 添加命令到历史记录
+     * @param command Git命令字符串
+     * @param commandName 命令显示名称
+     * @param success 是否成功
+     * @param error 错误信息（可选）
+     * @param remote 远程仓库名称（可选，用于推送、拉取等操作）
      */
-    static addCommand(command: string, commandName: string, success: boolean = true, error?: string) {
+    static addCommand(command: string, commandName: string, success: boolean = true, error?: string, remote?: string) {
         const item: CommandHistoryItem = {
             id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             command,
             commandName,
             timestamp: Date.now(),
             success,
-            error
+            error,
+            remote
         };
 
         this.history.unshift(item);
@@ -107,7 +114,6 @@ export class CommandHistory {
             { id: 'git-assistant.pushTag', name: '推送标签', description: '推送标签到远程仓库 (git push --tags)', icon: '📤', category: 'tag', requires: 'commits' },
 
             // 📊 查看操作 - 需要仓库
-            { id: 'git-assistant.showHistory', name: '查看提交历史', description: '查看Git提交历史 (git log)', icon: '📊', category: 'view', requires: 'repository' },
             { id: 'git-assistant.refreshBranches', name: '刷新分支列表', description: '刷新Git分支列表 (git branch)', icon: '🔄', category: 'view', requires: 'repository' },
 
             // ⚠️ 冲突处理 - 需要冲突

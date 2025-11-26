@@ -316,7 +316,7 @@ export function registerTagManager(
 
                     vscode.window.showInformationMessage(`✅ 所有标签已推送到 ${remote}`);
                     Logger.info(`推送所有标签到 ${remote}`);
-                    CommandHistory.addCommand(`git push --tags ${remote}`, '推送所有标签', true);
+                    CommandHistory.addCommand(`git push --tags ${remote}`, '推送所有标签', true, undefined, remote);
 
                 } else {
                     // 推送单个标签
@@ -375,7 +375,9 @@ export function registerTagManager(
                     CommandHistory.addCommand(
                         `git push ${remote} ${selected.tag}${force ? ' --force' : ''}`,
                         '推送标签',
-                        true
+                        true,
+                        undefined,
+                        remote
                     );
                 }
 
@@ -392,7 +394,15 @@ export function registerTagManager(
                     vscode.window.showErrorMessage(`推送标签失败: ${errorMessage}`);
                 }
 
-                CommandHistory.addCommand('git push --tags', '推送标签', false, errorMessage);
+                // 尝试获取远程仓库名称（如果可用）
+                let remoteName: string | undefined;
+                try {
+                    const remotes = await gitService.getRemotes();
+                    remoteName = remotes.length > 0 ? remotes[0].name : undefined;
+                } catch {
+                    // 忽略错误
+                }
+                CommandHistory.addCommand('git push --tags', '推送标签', false, errorMessage, remoteName);
             }
         })
     );

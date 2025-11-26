@@ -5,6 +5,9 @@ interface MergeInfo {
     from: string;
     to: string;
     commit: string;
+    type?: 'three-way' | 'fast-forward';
+    description?: string;
+    timestamp?: number;
 }
 
 /**
@@ -12,15 +15,31 @@ interface MergeInfo {
  */
 export const BranchDependencyGraph: React.FC<{ data: any }> = ({ data }) => {
     const svgRef = useRef<SVGSVGElement>(null);
+    const branchGraph = data?.branchGraph || {};
+    const branches = branchGraph.branches || [];
+    const merges = branchGraph.merges || [];
+    const currentBranch = branchGraph.currentBranch || data?.currentBranch || '';
+    const sortedMerges = React.useMemo(
+        () => [...merges].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)),
+        [merges]
+    );
+    const formatTimestamp = React.useCallback(
+        (ts?: number) => (ts ? new Date(ts).toLocaleString() : '时间未知'),
+        []
+    );
 
     useEffect(() => {
         if (!svgRef.current) return;
 
-        // 从 branchGraph 对象中获取数据
-        const branchGraph = data?.branchGraph || {};
-        const branches = branchGraph.branches || [];
-        const merges = branchGraph.merges || [];
-        const currentBranch = branchGraph.currentBranch || data?.currentBranch || '';
+        // 调试信息：打印分支和合并关系
+        if (process.env.NODE_ENV === 'development') {
+            console.log('Branch Dependency Graph Data:', {
+                branches,
+                merges,
+                currentBranch,
+                branchGraph
+            });
+        }
 
         if (branches.length === 0) {
             // 如果没有分支数据，显示空状态
@@ -42,7 +61,7 @@ export const BranchDependencyGraph: React.FC<{ data: any }> = ({ data }) => {
         }
 
         drawBranchGraph(svgRef.current, branches, merges, currentBranch);
-    }, [data]);
+    }, [branches, merges, currentBranch]);
 
     const drawBranchGraph = (container: SVGSVGElement, branches: string[], merges: MergeInfo[], currentBranch: string) => {
         d3.select(container).selectAll('*').remove();
@@ -87,7 +106,10 @@ export const BranchDependencyGraph: React.FC<{ data: any }> = ({ data }) => {
         const links = merges.map(merge => ({
             source: merge.from,
             target: merge.to,
-            commit: merge.commit
+            commit: merge.commit,
+            type: merge.type || 'three-way',
+            description: merge.description,
+            timestamp: merge.timestamp
         }));
 
         // 过滤掉不存在的节点
@@ -116,10 +138,17 @@ export const BranchDependencyGraph: React.FC<{ data: any }> = ({ data }) => {
             .selectAll('line')
             .data(validLinks)
             .enter().append('line')
-            .attr('stroke', '#569cd6')
+            .attr('stroke', (d: any) => d.type === 'fast-forward' ? '#9cdcfe' : '#569cd6')
             .attr('stroke-width', 2)
             .attr('marker-end', 'url(#arrowhead)')
-            .attr('opacity', 0.6);
+            .attr('opacity', 0.8)
+            .attr('stroke-dasharray', (d: any) => d.type === 'fast-forward' ? '6,4' : null);
+
+        link.append('title')
+            .text((d: any) => {
+                const desc = d.description || `${d.type === 'fast-forward' ? '快速合并' : '三路合并'}：${d.source.id || d.source} → ${d.target.id || d.target}`;
+                return `${desc}\n时间：${formatTimestamp(d.timestamp)}\n提交：${d.commit}`;
+            });
 
         // 绘制节点（在缩放容器中）
         const node = g.append('g')
@@ -244,21 +273,29 @@ export const BranchDependencyGraph: React.FC<{ data: any }> = ({ data }) => {
             .style('font-size', '12px')
             .text('其他分支');
 
-        legend.append('line')
-            .attr('x1', 0)
-            .attr('y1', 40)
-            .attr('x2', 20)
-            .attr('y2', 40)
-            .attr('stroke', '#569cd6')
-            .attr('stroke-width', 2)
-            .attr('marker-end', 'url(#arrowhead)');
+        const legendItems = [
+            { y: 40, label: '三路合并', dash: null, color: '#569cd6' },
+            { y: 60, label: '快速合并', dash: '6,4', color: '#9cdcfe' }
+        ];
 
-        legend.append('text')
-            .attr('x', 25)
-            .attr('y', 45)
-            .style('fill', '#fff')
-            .style('font-size', '12px')
-            .text('合并关系');
+        legendItems.forEach(item => {
+            legend.append('line')
+                .attr('x1', 0)
+                .attr('y1', item.y)
+                .attr('x2', 20)
+                .attr('y2', item.y)
+                .attr('stroke', item.color)
+                .attr('stroke-width', 2)
+                .attr('marker-end', 'url(#arrowhead)')
+                .attr('stroke-dasharray', item.dash || null);
+
+            legend.append('text')
+                .attr('x', 25)
+                .attr('y', item.y + 5)
+                .style('fill', '#fff')
+                .style('font-size', '12px')
+                .text(item.label);
+        });
     };
 
     return (
@@ -282,6 +319,29 @@ export const BranchDependencyGraph: React.FC<{ data: any }> = ({ data }) => {
                     <p>📊 暂无分支数据，请确保仓库中有分支信息</p>
                 </div>
             )}
+            <div className="merge-history" style={{ marginTop: '20px', padding: '16px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
+                <h3 style={{ marginBottom: '12px' }}>📝 合并记录</h3>
+                {sortedMerges.length === 0 ? (
+                    <p style={{ color: '#888' }}>暂无合并记录</p>
+                ) : (
+                    sortedMerges.map((merge, index) => (
+                        <div
+                            key={`${merge.from}-${merge.to}-${merge.commit}-${index}`}
+                            style={{
+                                padding: '8px 0',
+                                borderBottom: index === sortedMerges.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.05)'
+                            }}
+                        >
+                            <div style={{ fontWeight: 600 }}>
+                                {merge.description || `${merge.type === 'fast-forward' ? '快速合并' : '三路合并'}：${merge.from} → ${merge.to}`}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#aaa', marginTop: '4px' }}>
+                                时间：{formatTimestamp(merge.timestamp)} ｜ 提交：{merge.commit?.slice(0, 8)}
+                            </div>
+                        </div>
+                    ))
+                )}
+            </div>
             <div className="controls-hint" style={{ marginTop: '10px', fontSize: '12px', color: '#888' }}>
                 💡 提示：可以拖拽节点调整布局，使用鼠标滚轮缩放，拖拽空白区域平移
             </div>

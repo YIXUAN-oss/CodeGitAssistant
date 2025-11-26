@@ -3,6 +3,7 @@ import { GitService } from '../services/git-service';
 import { BranchProvider } from '../providers/branch-provider';
 import { HistoryProvider } from '../providers/history-provider';
 import { Logger } from '../utils/logger';
+import { CommandHistory } from '../utils/command-history';
 
 /**
  * 注册Git操作命令（Push, Pull, Clone）
@@ -16,6 +17,7 @@ export function registerGitOperations(
     // 快速推送
     context.subscriptions.push(
         vscode.commands.registerCommand('git-assistant.quickPush', async () => {
+            let selectedRemote = 'origin';
             try {
                 const config = vscode.workspace.getConfiguration('git-assistant');
                 const needConfirm = config.get('confirmPush', true);
@@ -25,6 +27,27 @@ export function registerGitOperations(
                 if (remotes.length === 0) {
                     vscode.window.showWarningMessage('尚未配置远程仓库，无法推送。请先添加远程仓库。');
                     return;
+                }
+
+                // 如果有多个远程仓库，让用户选择
+                if (remotes.length > 1) {
+                    const remoteItems = remotes.map(remote => ({
+                        label: `$(cloud) ${remote.name}`,
+                        description: remote.refs?.fetch || remote.refs?.push || '',
+                        remote: remote.name
+                    }));
+
+                    const selected = await vscode.window.showQuickPick(remoteItems, {
+                        placeHolder: '选择要推送到的远程仓库'
+                    });
+
+                    if (!selected) {
+                        return;
+                    }
+
+                    selectedRemote = selected.remote;
+                } else {
+                    selectedRemote = remotes[0].name;
                 }
 
                 // 获取当前状态
@@ -88,22 +111,31 @@ export function registerGitOperations(
                 await vscode.window.withProgress(
                     {
                         location: vscode.ProgressLocation.Notification,
-                        title: '正在推送到远程仓库...',
+                        title: `正在推送到 ${selectedRemote}...`,
                         cancellable: false
                     },
                     async (progress) => {
                         progress.report({ increment: 30 });
                         // 如果没有设置上游分支，使用 pushSetUpstream 方法
                         const result = needsUpstream
-                            ? await gitService.pushSetUpstream()
-                            : await gitService.push();
+                            ? await gitService.pushSetUpstream(selectedRemote)
+                            : await gitService.push(selectedRemote);
                         progress.report({ increment: 70 });
                         return result;
                     }
                 );
 
-                vscode.window.showInformationMessage('✅ 推送成功！');
+                vscode.window.showInformationMessage(`✅ 已推送到 ${selectedRemote}！`);
                 Logger.info('推送成功');
+
+                // 记录命令历史，包含远程仓库名称
+                const finalStatus = await gitService.getStatus();
+                const branch = finalStatus.current || 'main';
+                const command = needsUpstream
+                    ? `git push -u ${selectedRemote} ${branch}`
+                    : `git push ${selectedRemote} ${branch}`;
+                CommandHistory.addCommand(command, '快速推送', true, undefined, selectedRemote);
+
                 branchProvider.refresh();
                 historyProvider.refresh();
 
@@ -111,6 +143,28 @@ export function registerGitOperations(
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 Logger.error('推送失败', error instanceof Error ? error : new Error(errorMessage));
                 vscode.window.showErrorMessage(`推送失败: ${errorMessage}`);
+
+                // 记录失败的命令历史
+                try {
+                    const finalStatus = await gitService.getStatus();
+                    const branch = finalStatus.current || 'main';
+                    CommandHistory.addCommand(
+                        `git push ${selectedRemote} ${branch}`,
+                        '快速推送',
+                        false,
+                        errorMessage,
+                        selectedRemote
+                    );
+                } catch {
+                    // 如果获取状态失败，仍然记录基本命令
+                    CommandHistory.addCommand(
+                        'git push',
+                        '快速推送',
+                        false,
+                        errorMessage,
+                        selectedRemote
+                    );
+                }
             }
         })
     );
@@ -119,7 +173,36 @@ export function registerGitOperations(
     context.subscriptions.push(
         vscode.commands.registerCommand('git-assistant.quickPull', async () => {
             let hasStashed = false;
+            let selectedRemote = 'origin';
             try {
+                // 检查是否有远程仓库
+                const remotes = await gitService.getRemotes();
+                if (remotes.length === 0) {
+                    vscode.window.showWarningMessage('尚未配置远程仓库，无法拉取。请先添加远程仓库。');
+                    return;
+                }
+
+                // 如果有多个远程仓库，让用户选择
+                if (remotes.length > 1) {
+                    const remoteItems = remotes.map(remote => ({
+                        label: `$(cloud) ${remote.name}`,
+                        description: remote.refs?.fetch || remote.refs?.push || '',
+                        remote: remote.name
+                    }));
+
+                    const selected = await vscode.window.showQuickPick(remoteItems, {
+                        placeHolder: '选择要从哪个远程仓库拉取'
+                    });
+
+                    if (!selected) {
+                        return;
+                    }
+
+                    selectedRemote = selected.remote;
+                } else {
+                    selectedRemote = remotes[0].name;
+                }
+
                 // 检查是否有未提交的更改
                 const status = await gitService.getStatus();
                 if (status.modified.length > 0 || status.created.length > 0) {
@@ -144,12 +227,12 @@ export function registerGitOperations(
                 await vscode.window.withProgress(
                     {
                         location: vscode.ProgressLocation.Notification,
-                        title: '正在从远程仓库拉取...',
+                        title: `正在从 ${selectedRemote} 拉取...`,
                         cancellable: false
                     },
                     async (progress) => {
                         progress.report({ increment: 30 });
-                        const result = await gitService.pull();
+                        const result = await gitService.pull(selectedRemote);
                         progress.report({ increment: 70 });
                         return result;
                     }
@@ -174,6 +257,18 @@ export function registerGitOperations(
 
                 vscode.window.showInformationMessage('✅ 拉取成功！');
                 Logger.info('拉取成功');
+
+                // 记录命令历史，包含远程仓库名称
+                const finalStatus = await gitService.getStatus();
+                const branch = finalStatus.current || 'main';
+                CommandHistory.addCommand(
+                    `git pull ${selectedRemote} ${branch}`,
+                    '快速拉取',
+                    true,
+                    undefined,
+                    selectedRemote
+                );
+
                 branchProvider.refresh();
                 historyProvider.refresh();
 
@@ -190,6 +285,28 @@ export function registerGitOperations(
                     );
                 }
                 vscode.window.showErrorMessage(`拉取失败: ${errorMessage}`);
+
+                // 记录失败的命令历史
+                try {
+                    const finalStatus = await gitService.getStatus();
+                    const branch = finalStatus.current || 'main';
+                    CommandHistory.addCommand(
+                        `git pull ${selectedRemote} ${branch}`,
+                        '快速拉取',
+                        false,
+                        errorMessage,
+                        selectedRemote
+                    );
+                } catch {
+                    // 如果获取状态失败，仍然记录基本命令
+                    CommandHistory.addCommand(
+                        'git pull',
+                        '快速拉取',
+                        false,
+                        errorMessage,
+                        selectedRemote
+                    );
+                }
             }
         })
     );

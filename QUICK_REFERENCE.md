@@ -15,6 +15,14 @@ npm run watch
 
 ---
 
+## ⚡ 最新优化概览（2025/11）
+
+- 控制面板数据刷新改为 **Promise.allSettled** 并行模式，编辑/删除/推送后的回执更快
+- 标签列表使用 `git for-each-ref` 批量解析，Tag Manager 打开速度提升 3-5 倍
+- Webview 先推送基础数据、后推送统计信息，避免大仓库场景下的长时间空白
+
+---
+
 ## 📋 快捷键
 
 | 快捷键 | 功能 |
@@ -33,15 +41,21 @@ npm run watch
 
 | 命令 | 描述 |
 |------|------|
-| Git Assistant: 初始化仓库 | 在当前文件夹执行 `git init` |
+| Git Assistant: 初始化仓库 | 引导完成 `git init → add remote → add → commit → push` |
 | Git Assistant: 添加远程仓库 | 输入地址并执行 `git remote add` |
-| Git Assistant: 初始提交 | `git add .`、`git commit`（初始提交到本地仓库，可选推送） |
-| Git Assistant: 快速推送 | `git push`，带确认与进度 |
+| Git Assistant: 快速推送 | `git push`，带确认与进度提示 |
 | Git Assistant: 快速拉取 | `git pull`，可选自动 stash |
 | Git Assistant: 克隆仓库 | 引导选择目标目录并拉取代码 |
-| Git Assistant: 创建/切换/合并分支 | 分支管理命令 |
+| Git Assistant: 添加文件到暂存区 | 一键暂存全部或多选文件 |
+| Git Assistant: 提交更改 | 输入提交信息并提交到本地仓库 |
+| Git Assistant: 创建分支 | 输入校验 + 可选立即切换 |
+| Git Assistant: 切换分支 | 支持 `Ctrl+Alt+B` 快捷键与自动 stash |
+| Git Assistant: 合并分支 | 选择快进或三路合并策略 |
+| Git Assistant: 标签管理命令* | 创建/推送/删除标签（面板同源） |
 | Git Assistant: 解决冲突 | 打开冲突解决器 |
 | Git Assistant: 打开控制面板 | 查看统计与操作按钮 |
+
+> *包含 `git-assistant.createTag/deleteTag/pushTag/pushAllTags` 等命令，通常通过控制面板触发。
 
 ## 📊 可视化功能速查
 
@@ -49,14 +63,16 @@ npm run watch
 
 | 标签页 | 功能 | 技术 |
 |--------|------|------|
-| 📋 快捷指令 | 命令历史记录和快速执行 | React组件 |
+| 📋 快捷指令 | 命令历史记录、复制/重试、清空 | React组件 |
 | 📚 Git 指令集 | Git命令参考手册 | React组件 |
-| 🌿 分支管理 | 分支树和操作界面 | React组件 |
-| 🌳 分支依赖 | 分支合并路径与依赖关系可视化 | D3.js图形布局 |
-| ⚠️ 冲突解决 | 冲突检测和解决工具 | React组件 |
-| 📊 提交图谱 | 2D图形化提交历史，类似GitKraken | D3.js力导向图 |
-| 📅 时间线 | 提交时间线日历视图 | D3.js时间轴 + 日历 |
-| 🔥 热力图 | 文件修改频率和贡献者活跃度分析 | D3.js热力图 |
+| 🌿 分支管理 | 分支树、创建/切换/合并 | React组件 |
+| ☁️ 远程仓库 | 添加/重命名/更新/删除远程 | React组件 + VS Code 命令 |
+| 🏷️ 标签管理 | 创建注释/轻量标签、推送/删除 | React组件 |
+| 🌳 分支依赖 | 分支合并路径与依赖关系 | D3.js 图形布局 |
+| ⚠️ 冲突解决 | 冲突检测、三栏对比编辑、解决指令 | React组件 |
+| 📊 提交图谱 | 2D图形化提交历史，高 DPI 强化 | D3.js 力导向图 |
+| 📅 时间线 | 日历热力图 + 时间轴柱状图 | D3.js 时间轴 + 日历 |
+| 🔥 热力图 | 文件修改频率与贡献者活跃度 | D3.js 热力图 |
 
 ---
 
@@ -192,5 +208,5 @@ Ctrl+Shift+U → 选择 "Git Assistant"
 
 ---
 
-**项目状态：✅ 就绪** | **最后更新：2024-01-01**
+**项目状态：✅ v1.0.0 正式版** | **最后更新：2025-11-26**
 

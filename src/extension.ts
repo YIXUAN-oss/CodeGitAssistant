@@ -7,6 +7,7 @@ import { registerCommands } from './commands';
 import { DashboardPanel } from './webview/dashboard-panel';
 import { Logger } from './utils/logger';
 import { CommandHistory } from './utils/command-history';
+import { MergeHistory } from './utils/merge-history';
 
 /**
  * 扩展激活函数
@@ -15,8 +16,9 @@ export function activate(context: vscode.ExtensionContext) {
     Logger.initialize();
     Logger.info('Git Assistant 扩展已激活');
 
-    // 初始化命令历史
+    // 初始化命令历史与合并历史
     CommandHistory.initialize(context);
+    MergeHistory.initialize(context);
 
     // 初始化Git服务
     const gitService = new GitService();

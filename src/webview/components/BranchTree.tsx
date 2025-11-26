@@ -14,6 +14,9 @@ export const BranchTree: React.FC<{ data: any }> = ({ data }) => {
     const [switchingBranchName, setSwitchingBranchName] = useState<string | null>(null);
     const [switchResult, setSwitchResult] = useState<'success' | 'error' | null>(null);
     const previousCurrentBranch = React.useRef<string | null>(null);
+    const switchRequestTimestamp = useRef<number | null>(null);
+    const switchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const isSwitchingRef = useRef<boolean>(false);
 
     // 合并分支状态
     const [isMergingBranch, setIsMergingBranch] = useState<boolean>(false);
@@ -21,6 +24,8 @@ export const BranchTree: React.FC<{ data: any }> = ({ data }) => {
     const [mergeResult, setMergeResult] = useState<'success' | 'error' | null>(null);
     const mergeRequestTimestamp = useRef<number | null>(null);
     const previousLogCount = useRef<number>(0);
+    const mergeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const isMergingRef = useRef<boolean>(false);
 
     const handleBranchClick = (branchName: string) => {
         setSelectedBranch(branchName);
@@ -28,9 +33,27 @@ export const BranchTree: React.FC<{ data: any }> = ({ data }) => {
 
     const handleSwitchBranch = (branchName: string) => {
         setIsSwitchingBranch(true);
+        isSwitchingRef.current = true;
         setSwitchingBranchName(branchName);
         setSwitchResult(null);
+        switchRequestTimestamp.current = Date.now();
         previousCurrentBranch.current = data?.branches?.current || null;
+
+        // 清除之前的超时
+        if (switchTimeoutRef.current) {
+            clearTimeout(switchTimeoutRef.current);
+        }
+
+        // 设置超时：如果5秒内没有完成操作，自动重置状态（可能是用户取消了操作）
+        switchTimeoutRef.current = setTimeout(() => {
+            if (isSwitchingRef.current) {
+                setIsSwitchingBranch(false);
+                isSwitchingRef.current = false;
+                setSwitchingBranchName(null);
+                switchRequestTimestamp.current = null;
+            }
+        }, 5000);
+
         vscode.postMessage({
             command: 'switchBranch',
             branch: branchName
@@ -39,10 +62,27 @@ export const BranchTree: React.FC<{ data: any }> = ({ data }) => {
 
     const handleMergeBranch = (branchName: string) => {
         setIsMergingBranch(true);
+        isMergingRef.current = true;
         setMergingBranchName(branchName);
         setMergeResult(null);
         mergeRequestTimestamp.current = Date.now();
         previousLogCount.current = data?.log?.all?.length || 0;
+
+        // 清除之前的超时
+        if (mergeTimeoutRef.current) {
+            clearTimeout(mergeTimeoutRef.current);
+        }
+
+        // 设置超时：如果5秒内没有完成操作，自动重置状态（可能是用户取消了操作）
+        mergeTimeoutRef.current = setTimeout(() => {
+            if (isMergingRef.current) {
+                setIsMergingBranch(false);
+                isMergingRef.current = false;
+                setMergingBranchName(null);
+                mergeRequestTimestamp.current = null;
+            }
+        }, 5000);
+
         vscode.postMessage({
             command: 'mergeBranch',
             branch: branchName
@@ -84,20 +124,51 @@ export const BranchTree: React.FC<{ data: any }> = ({ data }) => {
 
     // 监听切换分支操作完成
     useEffect(() => {
-        if (!isSwitchingBranch || !switchingBranchName || !data?.branches) {
+        if (!isSwitchingBranch || !switchingBranchName || !data?.branches || !switchRequestTimestamp.current) {
             return;
         }
 
         const currentBranch = data.branches.current;
+        const timeSinceRequest = Date.now() - switchRequestTimestamp.current;
+
+        // 检查命令历史，看是否有对应的切换命令记录
+        const hasSwitchCommand = data?.commandHistory?.some((item: any) => {
+            const commandMatch = item.command === 'git-assistant.switchBranch' ||
+                (item.command && item.command.includes('checkout'));
+            const timeMatch = item.timestamp && item.timestamp >= switchRequestTimestamp.current!;
+            return commandMatch && timeMatch;
+        });
+
+        // 如果超过3秒且命令历史中没有对应的切换命令，可能是用户取消了操作
+        if (timeSinceRequest > 3000 && !hasSwitchCommand && currentBranch === previousCurrentBranch.current) {
+            // 清除超时定时器
+            if (switchTimeoutRef.current) {
+                clearTimeout(switchTimeoutRef.current);
+                switchTimeoutRef.current = null;
+            }
+            // 重置状态（操作被取消）
+            setIsSwitchingBranch(false);
+            isSwitchingRef.current = false;
+            setSwitchingBranchName(null);
+            switchRequestTimestamp.current = null;
+            return;
+        }
 
         // 如果当前分支已经改变为目标分支，说明切换成功
         if (currentBranch === switchingBranchName && currentBranch !== previousCurrentBranch.current) {
+            // 清除超时定时器
+            if (switchTimeoutRef.current) {
+                clearTimeout(switchTimeoutRef.current);
+                switchTimeoutRef.current = null;
+            }
             setIsSwitchingBranch(false);
+            isSwitchingRef.current = false;
             setSwitchResult('success');
             setSwitchingBranchName(null);
+            switchRequestTimestamp.current = null;
             previousCurrentBranch.current = currentBranch;
         }
-    }, [data?.branches?.current, isSwitchingBranch, switchingBranchName]);
+    }, [data?.branches?.current, data?.commandHistory, isSwitchingBranch, switchingBranchName]);
 
     // 清除切换分支结果提示
     useEffect(() => {
@@ -118,20 +189,73 @@ export const BranchTree: React.FC<{ data: any }> = ({ data }) => {
 
         const currentLogCount = data?.log?.all?.length || 0;
         const currentTimestamp = Date.now();
+        const timeSinceRequest = currentTimestamp - mergeRequestTimestamp.current;
 
-        // 如果数据已经刷新（提交数量增加或数据更新时间在请求之后），认为合并操作完成
-        // 给一个合理的延迟来等待数据刷新
-        if (currentTimestamp - mergeRequestTimestamp.current > 500) {
-            // 检查是否有新的提交（合并会产生新的提交）或者数据已经更新
-            if (currentLogCount > previousLogCount.current || currentTimestamp - mergeRequestTimestamp.current > 2000) {
+        // 检查命令历史，看是否有对应的合并命令记录
+        const hasMergeCommand = data?.commandHistory?.some((item: any) => {
+            const commandMatch = item.command === 'git-assistant.mergeBranch' ||
+                (item.command && item.command.includes('merge'));
+            const timeMatch = item.timestamp && item.timestamp >= mergeRequestTimestamp.current!;
+            return commandMatch && timeMatch;
+        });
+
+        // 如果超过3秒且命令历史中没有对应的合并命令，可能是用户取消了操作
+        if (timeSinceRequest > 3000 && !hasMergeCommand) {
+            // 清除超时定时器
+            if (mergeTimeoutRef.current) {
+                clearTimeout(mergeTimeoutRef.current);
+                mergeTimeoutRef.current = null;
+            }
+            // 重置状态（操作被取消）
+            setIsMergingBranch(false);
+            isMergingRef.current = false;
+            setMergingBranchName(null);
+            mergeRequestTimestamp.current = null;
+            return;
+        }
+
+        // 如果数据已经刷新（提交数量增加），认为合并操作完成
+        if (timeSinceRequest > 500) {
+            // 检查是否有新的提交（合并会产生新的提交）
+            if (currentLogCount > previousLogCount.current) {
+                // 清除超时定时器
+                if (mergeTimeoutRef.current) {
+                    clearTimeout(mergeTimeoutRef.current);
+                    mergeTimeoutRef.current = null;
+                }
+                // 合并成功
                 setIsMergingBranch(false);
+                isMergingRef.current = false;
                 setMergeResult('success');
                 setMergingBranchName(null);
                 mergeRequestTimestamp.current = null;
                 previousLogCount.current = currentLogCount;
+            } else if (hasMergeCommand) {
+                // 有命令记录但没有新提交，可能是快速合并（fast-forward）或失败
+                // 检查命令历史中的成功/失败状态
+                const mergeCommand = data?.commandHistory?.find((item: any) => {
+                    const commandMatch = item.command === 'git-assistant.mergeBranch' ||
+                        (item.command && item.command.includes('merge'));
+                    const timeMatch = item.timestamp && item.timestamp >= mergeRequestTimestamp.current!;
+                    return commandMatch && timeMatch;
+                });
+
+                if (mergeCommand && timeSinceRequest > 1500) {
+                    // 清除超时定时器
+                    if (mergeTimeoutRef.current) {
+                        clearTimeout(mergeTimeoutRef.current);
+                        mergeTimeoutRef.current = null;
+                    }
+                    // 根据命令结果设置状态
+                    setIsMergingBranch(false);
+                    isMergingRef.current = false;
+                    setMergeResult(mergeCommand.success ? 'success' : 'error');
+                    setMergingBranchName(null);
+                    mergeRequestTimestamp.current = null;
+                }
             }
         }
-    }, [data?.log, isMergingBranch, mergingBranchName]);
+    }, [data?.log, data?.commandHistory, isMergingBranch, mergingBranchName]);
 
     // 清除合并分支结果提示
     useEffect(() => {
@@ -143,6 +267,18 @@ export const BranchTree: React.FC<{ data: any }> = ({ data }) => {
         }, 2500);
         return () => clearTimeout(timer);
     }, [mergeResult]);
+
+    // 清理超时定时器
+    useEffect(() => {
+        return () => {
+            if (mergeTimeoutRef.current) {
+                clearTimeout(mergeTimeoutRef.current);
+            }
+            if (switchTimeoutRef.current) {
+                clearTimeout(switchTimeoutRef.current);
+            }
+        };
+    }, []);
 
     // 更新当前分支引用
     useEffect(() => {
@@ -179,8 +315,8 @@ export const BranchTree: React.FC<{ data: any }> = ({ data }) => {
             {((isCreatingBranch || creationResult) || (isSwitchingBranch || switchResult) || (isMergingBranch || mergeResult)) && (
                 <div
                     className={`branch-creation-status ${creationResult || switchResult || mergeResult
-                            ? (creationResult || switchResult || mergeResult)
-                            : 'loading'
+                        ? (creationResult || switchResult || mergeResult)
+                        : 'loading'
                         }`}
                 >
                     {isCreatingBranch && (

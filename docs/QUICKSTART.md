@@ -2,7 +2,9 @@
 
 本指南将帮助您快速上手 Git Assistant 扩展的开发和使用。
 
-## 🚀 5分钟快速开始
+> **当前版本**：v1.0.0 | **最后更新**：2025-11-26
+
+## 🚀 5 分钟快速开始
 
 ### 1. 安装和运行
 
@@ -11,7 +13,7 @@
 git clone https://github.com/yourusername/git-assistant.git
 cd git-assistant
 
-# 安装依赖（约1-2分钟）
+# 安装依赖（约 1-2 分钟）
 npm install
 
 # 启动开发模式
@@ -20,11 +22,11 @@ npm run watch
 
 ### 2. 调试扩展
 
-1. 在VS Code中打开项目文件夹
+1. 在 VS Code 中打开项目文件夹
 2. 按 `F5` 启动调试
-3. 在新打开的Extension Development Host窗口中：
-   - 打开一个包含Git仓库的项目
-   - 点击侧边栏的Git Assistant图标
+3. 在新打开的 Extension Development Host 窗口中：
+   - 打开一个包含 Git 仓库的项目
+   - 点击侧边栏的 Git Assistant 图标
    - 尝试各种功能
 
 ### 3. 测试功能
@@ -33,21 +35,23 @@ npm run watch
 - 按 `Ctrl+Alt+P` 尝试快速推送
 - 按 `Ctrl+Alt+L` 尝试快速拉取
 - 按 `Ctrl+Alt+B` 尝试切换分支
-- 在空文件夹按 `Ctrl+Shift+P` 执行 “Git Assistant: 初始化仓库 / 添加远程仓库 / 初始提交”
+- 在空文件夹按 `Ctrl+Shift+P` 执行 "Git Assistant: 初始化仓库 / 添加远程仓库"
 
 #### 测试可视化界面
 - 按 `Ctrl+Shift+P` 打开命令面板
 - 输入 "Git Assistant: 打开控制面板"
 - 查看仓库状态和操作按钮
-- 按固定顺序切换 8 个标签页体验功能：
-  - 📋 快捷指令（命令历史与快速执行）
-  - 📚 Git 指令集（常用命令速查）
-  - 🌿 分支管理
-  - 🌳 分支依赖
-  - ⚠️ 冲突解决
-  - 📊 提交图谱（2D，高DPI）
-  - 📅 时间线（日历 + 趋势图）
-  - 🔥 热力图（文件/贡献者分析）
+- 按固定顺序切换 **10 个标签页** 体验功能：
+  1. 📋 快捷指令 - 命令历史与快速执行
+  2. 📚 Git 指令集 - 常用命令速查
+  3. 🌿 分支管理 - 分支树、创建/切换/合并
+  4. ☁️ 远程仓库 - 添加/重命名/更新/删除远程
+  5. 🏷️ 标签管理 - 创建/推送/删除标签
+  6. 🌳 分支依赖 - 合并路径可视化
+  7. ⚠️ 冲突解决 - 冲突列表与三栏对比
+  8. 📊 提交图谱 - 2D 高 DPI 图谱
+  9. 📅 时间线 - 日历热力图 + 柱状图
+  10. 🔥 热力图 - 文件/贡献者分析
 
 ## 📝 常用开发任务
 
@@ -72,16 +76,16 @@ export function registerMyCommand(context: vscode.ExtensionContext) {
 
 ### 添加树视图
 
-1. 在 `src/providers/` 下创建Provider类
+1. 在 `src/providers/` 下创建 Provider 类
 2. 实现 `TreeDataProvider` 接口
 3. 在 `package.json` 中注册视图
-4. 在 `extension.ts` 中注册Provider
+4. 在 `extension.ts` 中注册 Provider
 
-### 添加Webview组件
+### 添加 Webview 组件
 
-1. 在 `src/webview/components/` 下创建React组件
-2. 在父组件中引入
-3. 处理与扩展的消息通信
+1. 在 `src/webview/components/` 下创建 React 组件
+2. 在 `App.tsx` 中引入并添加标签页
+3. 在 `dashboard-panel.ts` 中处理与扩展的消息通信
 
 ## 🧪 测试
 
@@ -99,16 +103,17 @@ npm run compile
 
 ### 手动测试清单
 
-- [ ] 推送/拉取快捷键正常（Ctrl+Alt+P / Ctrl+Alt+L）
-- [ ] 分支创建、切换、合并可用（含 Ctrl+Alt+B）
+- [ ] 推送/拉取快捷键正常（`Ctrl+Alt+P` / `Ctrl+Alt+L`）
+- [ ] 分支创建、切换、合并可用（含 `Ctrl+Alt+B`）
+- [ ] 远程仓库添加/重命名/更新 URL/删除可用
+- [ ] 标签创建/推送/删除可用
 - [ ] 冲突检测与解决工具可打开
 - [ ] 侧边栏的分支/历史/冲突视图均能加载
-- [ ] 控制面板可打开且标签顺序正确
+- [ ] 控制面板可打开且 10 个标签顺序正确
 - [ ] 快捷指令历史记录新增命令并可重新执行
 - [ ] Git 指令集内容加载、搜索功能可用
 - [ ] "初始化仓库 → 添加远程 → 初始提交" 引导可完成
-- [ ] 标签管理命令（创建/查看/删除标签）可执行
-- [ ] 2D提交图谱渲染、缩放、hover正常
+- [ ] 2D 提交图谱渲染、缩放、hover 正常
 - [ ] 热力图、分支依赖图、时间线数据准确
 
 ## 🐛 调试技巧
@@ -121,29 +126,29 @@ npm run compile
 ### 断点调试
 1. 在代码中设置断点
 2. 按 `F5` 启动调试
-3. 在Extension Host中触发功能
+3. 在 Extension Host 中触发功能
 4. 查看变量和调用栈
 
-### Webview调试
-1. 在Webview中右键
+### Webview 调试
+1. 在 Webview 中右键
 2. 选择"打开开发者工具"
-3. 使用Chrome DevTools调试
+3. 使用 Chrome DevTools 调试
 
 ## 📦 打包和发布
 
 ### 本地打包
 ```bash
-# 安装vsce
+# 安装 vsce
 npm install -g @vscode/vsce
 
 # 打包
 vsce package
 
-# 生成 git-assistant-x.x.x.vsix
+# 生成 git-assistant-1.0.0.vsix
 ```
 
 ### 本地安装测试
-1. 在VS Code中按 `Ctrl+Shift+P`
+1. 在 VS Code 中按 `Ctrl+Shift+P`
 2. 输入 "Extensions: Install from VSIX..."
 3. 选择生成的 `.vsix` 文件
 
@@ -167,22 +172,26 @@ vsce publish
 - [开发文档](DEVELOPMENT.md) - 详细的开发指南
 - [贡献指南](../CONTRIBUTING.md) - 如何贡献代码
 - [架构概览](../PROJECT_OVERVIEW.md) - 系统架构说明
+- [功能速查](../QUICK_REFERENCE.md) - 快捷键与命令速查
 
 ### 示例代码
 查看 `src/` 目录下的代码，特别是：
-- `commands/git-operations.ts` - Git操作示例
+- `commands/git-operations.ts` - Git 操作示例
 - `commands/repository-init.ts` - 初始化/远程/初始提交流程
+- `commands/tag-manager.ts` - 标签管理命令
 - `providers/branch-provider.ts` - 树视图示例
-- `webview/dashboard-panel.ts` - Webview示例
+- `webview/dashboard-panel.ts` - Webview 消息处理与并行刷新
+- `webview/components/RemoteManager.tsx` - 远程仓库管理组件
+- `webview/components/TagManager.tsx` - 标签管理组件
 
 ## 🎯 下一步
 
 现在您已经了解了基础知识，可以：
 
-1. 📖 阅读[开发文档](DEVELOPMENT.md)了解更多细节
-2. 🐛 在[Issues](https://github.com/yourusername/git-assistant/issues)中查找待解决的问题
-3. 💡 在[Discussions](https://github.com/yourusername/git-assistant/discussions)中分享想法
-4. 🤝 提交您的第一个Pull Request
+1. 📖 阅读 [开发文档](DEVELOPMENT.md) 了解更多细节
+2. 🐛 在 [Issues](https://github.com/yourusername/git-assistant/issues) 中查找待解决的问题
+3. 💡 在 [Discussions](https://github.com/yourusername/git-assistant/discussions) 中分享想法
+4. 🤝 提交您的第一个 Pull Request
 
 ## ❓ 遇到问题？
 
@@ -191,4 +200,3 @@ vsce publish
 - 提交 [Issue](https://github.com/yourusername/git-assistant/issues)
 
 祝开发愉快！🎉
-

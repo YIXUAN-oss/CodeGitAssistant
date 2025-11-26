@@ -1,6 +1,8 @@
 # 开发文档
 
-本文档提供Git Assistant扩展的详细开发指南。
+本文档提供 Git Assistant 扩展的详细开发指南。
+
+> **当前版本**：v1.0.0 | **最后更新**：2025-11-26
 
 ## 📋 目录
 
@@ -38,7 +40,7 @@ npm run compile
 npm run watch
 ```
 
-### VS Code配置
+### VS Code 配置
 
 推荐安装以下扩展：
 - ESLint
@@ -51,126 +53,177 @@ git-assistant/
 ├── src/                          # 源代码
 │   ├── extension.ts             # 扩展入口
 │   ├── commands/                # 命令处理
-│   │   ├── index.ts            # 命令注册
-│   │   ├── git-operations.ts   # Git操作命令
+│   │   ├── index.ts            # 命令注册（含 addFiles/commitChanges）
+│   │   ├── git-operations.ts   # Git 操作命令（Push/Pull/Clone）
 │   │   ├── branch-manager.ts   # 分支管理命令
 │   │   ├── conflict-resolver.ts # 冲突解决命令
-│   │   ├── repository-init.ts   # 初始化、远程与初始提交
-│   │   └── tag-manager.ts       # 标签创建/查看/删除
+│   │   ├── repository-init.ts   # 仓库初始化/远程/初始提交
+│   │   └── tag-manager.ts       # 标签创建/推送/删除
 │   ├── providers/              # 树视图提供者
 │   │   ├── branch-provider.ts
 │   │   ├── history-provider.ts
 │   │   └── conflict-provider.ts
 │   ├── services/               # 业务服务
-│   │   └── git-service.ts      # Git服务封装
-│   ├── webview/                # Webview界面
-│   │   ├── index.tsx           # React入口
-│   │   ├── dashboard-panel.ts  # 面板管理
-│   │   └── components/         # React组件
-│   │       ├── App.tsx                     # 8个标签页控制
-│   │       ├── CommandHistory.tsx          # 快捷指令历史
-│   │       ├── GitCommandReference.tsx     # Git 指令集
-│   │       ├── BranchTree.tsx / BranchDependencyGraph.tsx
-│   │       ├── CommitGraph.tsx / CommitGraph3D.tsx (实验)
-│   │       ├── TimelineView.tsx / HeatmapAnalysis.tsx
-│   │       └── ConflictEditor.tsx
+│   │   └── git-service.ts      # Git 服务封装（simple-git）
+│   ├── webview/                # Webview 界面
+│   │   ├── index.tsx           # React 入口
+│   │   ├── globals.d.ts        # VS Code webview 类型声明
+│   │   ├── tsconfig.json       # Webview TS 配置
+│   │   ├── dashboard-panel.ts  # 面板管理（消息处理、并行刷新）
+│   │   └── components/         # React 组件（10 个标签页）
+│   │       ├── App.tsx                     # 主应用 / 标签切换
+│   │       ├── App.css                     # 样式
+│   │       ├── CommandHistory.tsx          # 📋 快捷指令
+│   │       ├── GitCommandReference.tsx     # 📚 Git 指令集
+│   │       ├── BranchTree.tsx              # 🌿 分支管理
+│   │       ├── RemoteManager.tsx           # ☁️ 远程仓库
+│   │       ├── TagManager.tsx              # 🏷️ 标签管理
+│   │       ├── BranchDependencyGraph.tsx   # 🌳 分支依赖
+│   │       ├── ConflictEditor.tsx          # ⚠️ 冲突解决
+│   │       ├── CommitGraph.tsx             # 📊 2D 提交图谱（高 DPI）
+│   │       ├── TimelineView.tsx            # 📅 时间线
+│   │       ├── HeatmapAnalysis.tsx         # 🔥 热力图
+│   │       └── CommitGraph3D.tsx           # 🧪 3D 提交图谱（实验）
 │   ├── utils/                  # 工具函数
 │   │   ├── git-utils.ts
 │   │   ├── logger.ts
 │   │   ├── notification.ts
 │   │   ├── command-history.ts
+│   │   ├── merge-history.ts
 │   │   └── constants.ts
 │   └── types/                  # 类型定义
 │       └── git.ts
 ├── resources/                   # 资源文件（扩展图标）
 │   └── git-icon.svg
-├── dist/                        # 编译输出
+├── dist/                        # Webpack 编译输出
+├── out/                         # VS Code 测试编译输出
 ├── package.json                 # 包配置
-├── tsconfig.json               # TypeScript配置
-├── webpack.config.js           # Webpack配置
+├── tsconfig.json               # TypeScript 配置
+├── webpack.config.js           # Webpack 配置
 └── README.md                   # 说明文档
 ```
 
 ## 核心概念
 
-### Extension激活
+### Extension 激活
 
 扩展在以下情况激活：
-- 工作区包含`.git`目录
+- 工作区包含 `.git` 目录
 - 用户执行相关命令
-- 打开Git Assistant视图
+- 打开 Git Assistant 视图
+- VS Code 启动完成（`onStartupFinished`）
 
 ```typescript
 export function activate(context: vscode.ExtensionContext) {
+    // 初始化日志与历史
+    Logger.initialize();
+    CommandHistory.initialize(context);
+    MergeHistory.initialize(context);
+
     // 初始化服务
     const gitService = new GitService();
-    
+
     // 注册提供者
     const branchProvider = new BranchProvider(gitService);
-    
+    const historyProvider = new HistoryProvider(gitService);
+    const conflictProvider = new ConflictProvider(gitService);
+
     // 注册命令
-    registerCommands(context, gitService, branchProvider);
+    registerCommands(context, gitService, branchProvider, historyProvider, conflictProvider);
 }
 ```
 
-### Git服务封装
+### Git 服务封装
 
-所有Git操作通过`GitService`类封装：
+所有 Git 操作通过 `GitService` 类封装：
 
 ```typescript
 class GitService {
     private git: SimpleGit;
-    
+
     async getBranches(): Promise<BranchSummary> {
         return await this.git.branch();
     }
-    
+
     async push(remote: string, branch: string): Promise<void> {
         await this.git.push(remote, branch);
     }
+
+    // 标签批量获取（git for-each-ref）
+    async getTags(): Promise<TagInfo[]> { ... }
+
+    // 远程管理
+    async getRemotes(): Promise<RemoteInfo[]> { ... }
+    async renameRemote(oldName: string, newName: string): Promise<void> { ... }
+    async updateRemoteUrl(name: string, url: string): Promise<void> { ... }
+    async removeRemote(name: string): Promise<void> { ... }
 }
 ```
 
 ### 树视图提供者
 
-实现`TreeDataProvider`接口：
+实现 `TreeDataProvider` 接口：
 
 ```typescript
 class BranchProvider implements vscode.TreeDataProvider<BranchTreeItem> {
     private _onDidChangeTreeData = new vscode.EventEmitter<void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
-    
+
     refresh(): void {
         this._onDidChangeTreeData.fire();
     }
-    
+
     getTreeItem(element: BranchTreeItem): vscode.TreeItem {
         return element;
     }
-    
+
     async getChildren(): Promise<BranchTreeItem[]> {
         // 返回子节点
     }
 }
 ```
 
-### Webview面板
+### Webview 面板
 
-创建和管理Webview：
+创建和管理 Webview：
 
 ```typescript
 class DashboardPanel {
     private readonly _panel: vscode.WebviewPanel;
-    
-    static createOrShow(extensionUri: vscode.Uri) {
+
+    static createOrShow(extensionUri: vscode.Uri, gitService: GitService) {
         const panel = vscode.window.createWebviewPanel(
-            'gitDashboard',
-            'Git Dashboard',
+            'gitAssistantDashboard',
+            'Git Assistant 控制面板',
             vscode.ViewColumn.One,
-            { enableScripts: true }
+            { enableScripts: true, localResourceRoots: [...] }
         );
-        
-        panel.webview.html = getWebviewContent();
+
+        // 处理 Webview 消息
+        panel.webview.onDidReceiveMessage(async (message) => {
+            switch (message.command) {
+                case 'getData':
+                    await this._sendGitData();
+                    break;
+                case 'createTag':
+                    await vscode.commands.executeCommand('git-assistant.createTag');
+                    break;
+                // ... 更多消息
+            }
+        });
+    }
+
+    // 并行刷新 Git 数据
+    private async _sendGitData() {
+        const [statusResult, branchesResult, logResult, remotesResult, tagsResult] =
+            await Promise.allSettled([
+                this.gitService.getStatus(),
+                this.gitService.getBranches(),
+                this.gitService.getLog(100),
+                this.gitService.getRemotes(),
+                this.gitService.getTags()
+            ]);
+        // 组装数据并推送到 Webview
     }
 }
 ```
@@ -180,11 +233,11 @@ class DashboardPanel {
 ### 1. 启动开发环境
 
 ```bash
-# 终端1: 监听TypeScript编译
+# 终端1: 监听 TypeScript 编译
 npm run watch
 
 # 终端2: 运行扩展
-# 在VS Code中按F5
+# 在 VS Code 中按 F5
 ```
 
 ### 2. 开发新功能
@@ -216,8 +269,8 @@ npm run compile-tests
 ### 4. 调试
 
 - 设置断点
-- 按F5启动调试
-- 在Extension Host窗口中测试
+- 按 F5 启动调试
+- 在 Extension Host 窗口中测试
 - 查看调试控制台输出
 
 ## 调试技巧
@@ -225,29 +278,30 @@ npm run compile-tests
 ### 扩展主机调试
 
 ```typescript
-// 使用console.log调试
+// 使用 console.log 调试
 console.log('Debug info:', data);
 
-// 使用Logger
+// 使用 Logger
 Logger.debug('Debug message', { data });
 
-// 使用VS Code输出通道
+// 使用 VS Code 输出通道
 outputChannel.appendLine('Debug info');
 ```
 
-### Webview调试
+### Webview 调试
 
-1. 在Webview中右键 -> "打开开发者工具"
-2. 使用Chrome DevTools调试
-3. 查看Console和Network面板
+1. 在 Webview 中右键 -> "打开开发者工具"
+2. 使用 Chrome DevTools 调试
+3. 查看 Console 和 Network 面板
 
 ### 常见问题排查
 
 **问题**: 扩展不激活
 ```typescript
-// 检查activationEvents配置
+// 检查 activationEvents 配置
 "activationEvents": [
-    "workspaceContains:.git"
+    "workspaceContains:.git",
+    "onStartupFinished"
 ]
 ```
 
@@ -255,7 +309,7 @@ outputChannel.appendLine('Debug info');
 ```typescript
 // 确保命令已注册
 context.subscriptions.push(
-    vscode.commands.registerCommand('your.command', handler)
+    vscode.commands.registerCommand('git-assistant.yourCommand', handler)
 );
 ```
 
@@ -265,9 +319,54 @@ context.subscriptions.push(
 this._onDidChangeTreeData.fire();
 ```
 
+**问题**: 控制面板长时间加载
+```typescript
+// 检查 Promise.allSettled 是否正确处理失败
+// 确保单项失败不阻塞整体 UI
+```
+
 ## 性能优化
 
-### 1. 延迟加载
+### 1. 并行数据刷新
+
+```typescript
+// 使用 Promise.allSettled 同时抓取多项数据
+const [statusResult, branchesResult, logResult] = await Promise.allSettled([
+    gitService.getStatus(),
+    gitService.getBranches(),
+    gitService.getLog(100)
+]);
+```
+
+### 2. 标签批量解析
+
+```typescript
+// 使用 git for-each-ref 一次取回全部标签
+async getTags(): Promise<TagInfo[]> {
+    const result = await this.git.raw([
+        'for-each-ref',
+        '--sort=-creatordate',
+        '--format=%(refname:short)|%(objectname)|%(contents:subject)|%(creatordate:iso8601)',
+        'refs/tags'
+    ]);
+    // 解析结果
+}
+```
+
+### 3. 防抖和节流
+
+```typescript
+// 文件监听防抖（300ms）
+let refreshTimeout: NodeJS.Timeout | undefined;
+const debouncedRefresh = () => {
+    if (refreshTimeout) clearTimeout(refreshTimeout);
+    refreshTimeout = setTimeout(() => {
+        refreshAllProviders();
+    }, 300);
+};
+```
+
+### 4. 延迟加载
 
 ```typescript
 // 按需导入大型模块
@@ -277,47 +376,23 @@ async function heavyOperation() {
 }
 ```
 
-### 2. 缓存结果
+### 5. 缓存结果
 
 ```typescript
 class GitService {
     private branchCache?: BranchSummary;
     private cacheTime = 0;
-    
+
     async getBranches(): Promise<BranchSummary> {
         const now = Date.now();
         if (this.branchCache && now - this.cacheTime < 5000) {
             return this.branchCache;
         }
-        
+
         this.branchCache = await this.git.branch();
         this.cacheTime = now;
         return this.branchCache;
     }
-}
-```
-
-### 3. 防抖和节流
-
-```typescript
-import { debounce } from './utils';
-
-class MyProvider {
-    // 防抖刷新
-    private debouncedRefresh = debounce(() => {
-        this.refresh();
-    }, 300);
-}
-```
-
-### 4. 虚拟滚动
-
-对于大量数据，使用虚拟滚动：
-
-```typescript
-// 只渲染可见区域的项
-function renderVisibleItems(startIndex: number, endIndex: number) {
-    return items.slice(startIndex, endIndex);
 }
 ```
 
@@ -327,15 +402,15 @@ function renderVisibleItems(startIndex: number, endIndex: number) {
 
 ```bash
 # 更新版本号
-npm version patch  # 0.1.0 -> 0.1.1
-npm version minor  # 0.1.0 -> 0.2.0
-npm version major  # 0.1.0 -> 1.0.0
+npm version patch  # 1.0.0 -> 1.0.1
+npm version minor  # 1.0.0 -> 1.1.0
+npm version major  # 1.0.0 -> 2.0.0
 ```
 
 ### 2. 更新文档
 
-- 更新`CHANGELOG.md`
-- 更新`README.md`
+- 更新 `CHANGELOG.md`
+- 更新 `README.md`
 - 检查所有文档链接
 
 ### 3. 构建和测试
@@ -357,13 +432,13 @@ npm run lint
 ### 4. 打包
 
 ```bash
-# 安装vsce
+# 安装 vsce
 npm install -g @vscode/vsce
 
 # 打包扩展
 vsce package
 
-# 生成 git-assistant-0.1.0.vsix
+# 生成 git-assistant-1.0.0.vsix
 ```
 
 ### 5. 发布
@@ -375,18 +450,18 @@ vsce login your-publisher-name
 # 发布到市场
 vsce publish
 
-# 或手动上传.vsix文件
+# 或手动上传 .vsix 文件
 ```
 
 ### 6. GitHub Release
 
 ```bash
 # 创建标签
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin v0.1.0
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
 
-# 在GitHub上创建Release
-# 上传.vsix文件作为附件
+# 在 GitHub 上创建 Release
+# 上传 .vsix 文件作为附件
 ```
 
 ## 最佳实践
@@ -406,23 +481,31 @@ try {
 ### 2. 进度提示
 
 ```typescript
-await Notification.withProgress('正在推送...', async (progress) => {
-    progress.report({ increment: 30 });
-    await gitService.push();
-    progress.report({ increment: 70 });
-});
+await vscode.window.withProgress(
+    {
+        location: vscode.ProgressLocation.Notification,
+        title: '正在推送...',
+        cancellable: false
+    },
+    async (progress) => {
+        progress.report({ increment: 30 });
+        await gitService.push();
+        progress.report({ increment: 70 });
+    }
+);
 ```
 
 ### 3. 用户确认
 
 ```typescript
-const confirmed = await Notification.confirm(
+const confirmed = await vscode.window.showWarningMessage(
     '确定要删除分支吗？',
+    { modal: true },
     '删除',
     '取消'
 );
 
-if (confirmed) {
+if (confirmed === '删除') {
     await gitService.deleteBranch(branchName);
 }
 ```
@@ -432,16 +515,25 @@ if (confirmed) {
 ```typescript
 const config = vscode.workspace.getConfiguration('git-assistant');
 const autoFetch = config.get<boolean>('autoFetch', true);
+const confirmPush = config.get<boolean>('confirmPush', true);
+```
+
+### 5. 命令历史记录
+
+```typescript
+// 记录命令执行结果
+CommandHistory.addCommand('git push origin main', '快速推送', true);
+CommandHistory.addCommand('git push', '推送', false, '认证失败');
 ```
 
 ## 参考资源
 
 - [VS Code Extension API](https://code.visualstudio.com/api)
-- [simple-git文档](https://github.com/steveukx/git-js)
-- [TypeScript官方文档](https://www.typescriptlang.org/)
-- [React官方文档](https://react.dev/)
+- [simple-git 文档](https://github.com/steveukx/git-js)
+- [TypeScript 官方文档](https://www.typescriptlang.org/)
+- [React 官方文档](https://react.dev/)
+- [D3.js 官方文档](https://d3js.org/)
 
 ---
 
 如有疑问，请在 [GitHub Discussions](https://github.com/yourusername/git-assistant/discussions) 提问。
-
