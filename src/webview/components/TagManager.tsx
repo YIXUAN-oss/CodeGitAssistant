@@ -72,8 +72,11 @@ export const TagManager: React.FC<{ data: any }> = ({ data }) => {
         );
     }
 
-    const tags = data.tags || [];
-    const hasTags = tags.length > 0;
+    const localTags = data.tags || [];
+    const remoteTags = data.remoteTags || [];
+    const hasLocalTags = localTags.length > 0;
+    const hasRemoteTags = remoteTags.length > 0;
+    const hasTags = hasLocalTags || hasRemoteTags;
 
     return (
         <div className="tag-manager">
@@ -124,17 +127,11 @@ export const TagManager: React.FC<{ data: any }> = ({ data }) => {
                 </div>
             )}
 
-            {!hasTags ? (
-                <div className="empty-state">
-                    <div className="empty-icon">🏷️</div>
-                    <p>当前仓库还没有标签</p>
-                    <p className="empty-hint">点击上方按钮创建第一个标签</p>
-                </div>
-            ) : (
-                <div className="tag-section">
-                    <h3>📁 本地标签 ({tags.length})</h3>
-                    <div className="tag-list">
-                        {tags.map((tag: any) => (
+            <div className="tag-section">
+                <h3>📁 本地标签 ({localTags.length})</h3>
+                <div className="tag-list">
+                    {hasLocalTags ? (
+                        localTags.map((tag: any) => (
                             <div
                                 key={tag.name}
                                 className={`tag-item ${tag.name === selectedTag ? 'selected' : ''}`}
@@ -185,10 +182,45 @@ export const TagManager: React.FC<{ data: any }> = ({ data }) => {
                                     </button>
                                 </div>
                             </div>
-                        ))}
-                    </div>
+                        ))
+                    ) : (
+                        <div className="empty-state" style={{ padding: '20px', textAlign: 'center' }}>
+                            <p style={{ color: '#888' }}>暂无本地标签</p>
+                        </div>
+                    )}
                 </div>
-            )}
+            </div>
+
+            <div className="tag-section">
+                <h3>☁️ 远程标签 ({remoteTags.length})</h3>
+                <div className="tag-list">
+                    {hasRemoteTags ? (
+                        remoteTags.map((tag: any) => (
+                            <div
+                                key={tag.name}
+                                className="tag-item"
+                                onClick={() => handleTagClick(tag.name)}
+                            >
+                                <div className="tag-info">
+                                    <span className="tag-icon">☁️</span>
+                                    <div className="tag-details">
+                                        <span className="tag-name">{tag.name}</span>
+                                        <div className="tag-meta">
+                                            <span className="tag-commit">
+                                                提交: {tag.commit.substring(0, 8)}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ))
+                    ) : (
+                        <div className="empty-state" style={{ padding: '20px', textAlign: 'center' }}>
+                            <p style={{ color: '#888' }}>暂无远程标签</p>
+                        </div>
+                    )}
+                </div>
+            </div>
 
         </div>
     );

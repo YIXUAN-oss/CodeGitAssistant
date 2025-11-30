@@ -4,6 +4,77 @@ import { GitService } from '../services/git-service';
 import { CommandHistory } from '../utils/command-history';
 
 /**
+ * Webview 消息类型
+ */
+interface WebviewMessage {
+    command: string;
+    commandId?: string;
+    branch?: string;
+    tagName?: string;
+    remoteName?: string;
+    remote?: string;
+    file?: string;
+    action?: 'current' | 'incoming' | 'both';
+    text?: string;
+    url?: string;
+    [key: string]: unknown;
+}
+
+/**
+ * 远程仓库信息
+ */
+interface RemoteInfo {
+    name: string;
+    refs?: {
+        fetch?: string;
+        push?: string;
+    };
+}
+
+/**
+ * 提交信息
+ */
+interface CommitInfo {
+    hash: string;
+    message: string;
+    author_name: string;
+    date: string;
+}
+
+/**
+ * Git 状态信息
+ */
+interface GitStatus {
+    modified: string[];
+    created: string[];
+    deleted: string[];
+    [key: string]: unknown;
+}
+
+/**
+ * Git 分支信息
+ */
+interface GitBranches {
+    all: string[];
+    current: string | null;
+    [key: string]: unknown;
+}
+
+/**
+ * Git 数据
+ */
+interface GitData {
+    status?: GitStatus;
+    branches?: GitBranches;
+    log?: {
+        all: CommitInfo[];
+        [key: string]: unknown;
+    };
+    remotes?: RemoteInfo[];
+    [key: string]: unknown;
+}
+
+/**
  * Git Assistant 控制面板
  */
 export class DashboardPanel {
@@ -51,7 +122,7 @@ export class DashboardPanel {
 
         // 处理来自webview的消息
         this._panel.webview.onDidReceiveMessage(
-            async (message) => {
+            async (message: WebviewMessage) => {
                 try {
                     switch (message.command) {
                         case 'getData':
@@ -61,7 +132,9 @@ export class DashboardPanel {
                             await this._update();
                             break;
                         case 'executeCommand':
-                            await this._executeCommand(message.commandId);
+                            if (message.commandId) {
+                                await this._executeCommand(message.commandId);
+                            }
                             break;
                         case 'clearHistory':
                             CommandHistory.clear();
@@ -77,19 +150,27 @@ export class DashboardPanel {
                             await this._executeCommand('git-assistant.createBranch');
                             break;
                         case 'switchBranch':
-                            await this._handleSwitchBranch(message.branch);
+                            if (message.branch) {
+                                await this._handleSwitchBranch(message.branch);
+                            }
                             break;
                         case 'mergeBranch':
-                            await this._handleMergeBranch(message.branch);
+                            if (message.branch) {
+                                await this._handleMergeBranch(message.branch);
+                            }
                             break;
                         case 'createTag':
                             await this._executeCommand('git-assistant.createTag');
                             break;
                         case 'deleteTag':
-                            await this._handleDeleteTag(message.tagName);
+                            if (message.tagName) {
+                                await this._handleDeleteTag(message.tagName);
+                            }
                             break;
                         case 'pushTag':
-                            await this._handlePushTag(message.tagName);
+                            if (message.tagName) {
+                                await this._handlePushTag(message.tagName);
+                            }
                             break;
                         case 'pushAllTags':
                             await this._handlePushAllTags();
@@ -125,22 +206,34 @@ export class DashboardPanel {
                             await this._executeCommand('git-assistant.addRemote');
                             break;
                         case 'editRemote':
-                            await this._handleEditRemote(message.remote);
+                            if (message.remote) {
+                                await this._handleEditRemote(message.remote);
+                            }
                             break;
                         case 'deleteRemote':
-                            await this._handleDeleteRemote(message.remote);
+                            if (message.remote) {
+                                await this._handleDeleteRemote(message.remote);
+                            }
                             break;
                         case 'resolveConflict':
-                            await this._resolveConflict(message.file, message.action);
+                            if (message.file && message.action) {
+                                await this._resolveConflict(message.file, message.action);
+                            }
                             break;
                         case 'openFile':
-                            await this._openFile(message.file);
+                            if (message.file) {
+                                await this._openFile(message.file);
+                            }
                             break;
                         case 'copyToClipboard':
-                            await this._copyToClipboard(message.text);
+                            if (message.text) {
+                                await this._copyToClipboard(message.text);
+                            }
                             break;
                         case 'openRemoteUrl':
-                            await this._openRemoteUrl(message.url);
+                            if (message.url) {
+                                await this._openRemoteUrl(message.url);
+                            }
                             break;
                         default:
                             console.warn(`Unknown command: ${message.command}`);
@@ -236,28 +329,143 @@ export class DashboardPanel {
                 return;
             }
 
+            // ========== 合并前状态检查 ==========
+            const status = await this.gitService.getStatus();
+            const hasUncommittedChanges = status.modified.length > 0 ||
+                status.created.length > 0 ||
+                status.deleted.length > 0 ||
+                status.not_added.length > 0;
+
+            if (hasUncommittedChanges) {
+                const changeCount = status.modified.length + status.created.length + status.deleted.length + status.not_added.length;
+                const changeDetails = [
+                    status.modified.length > 0 ? `${status.modified.length} 个已修改文件` : '',
+                    status.created.length > 0 ? `${status.created.length} 个新文件` : '',
+                    status.deleted.length > 0 ? `${status.deleted.length} 个已删除文件` : '',
+                    status.not_added.length > 0 ? `${status.not_added.length} 个未跟踪文件` : ''
+                ].filter(Boolean).join('、');
+
+                const choice = await vscode.window.showWarningMessage(
+                    `合并前检测到 ${changeCount} 个未提交的更改 (${changeDetails})。建议先提交或暂存这些更改。`,
+                    { modal: true },
+                    '暂存后继续',
+                    '提交后继续',
+                    '直接合并',
+                    '取消'
+                );
+
+                if (!choice || choice === '取消') {
+                    return;
+                }
+
+                if (choice === '暂存后继续') {
+                    await this.gitService.stash(`Stash before merging ${branchName}`);
+                    vscode.window.showInformationMessage('✅ 更改已暂存');
+                } else if (choice === '提交后继续') {
+                    // 提示用户先提交
+                    vscode.window.showWarningMessage(
+                        '请先使用 "Git: 提交所有更改" 命令提交更改，然后再进行合并操作。',
+                        '打开命令面板'
+                    ).then(selected => {
+                        if (selected === '打开命令面板') {
+                            vscode.commands.executeCommand('workbench.action.showCommands');
+                        }
+                    });
+                    return;
+                }
+                // '直接合并' 继续执行合并流程
+            }
+
+            // ========== 合并策略智能建议 ==========
+            const mergeInfo = await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: '正在分析分支关系...',
+                    cancellable: false
+                },
+                async () => {
+                    return await this.gitService.getBranchMergeInfo(branchName);
+                }
+            );
+
+            // 根据分析结果构建策略选项
+            const strategyOptions: Array<{
+                label: string;
+                description: string;
+                value: 'fast-forward' | 'three-way';
+                recommended?: boolean;
+            }> = [];
+
+            if (mergeInfo.canFastForward === true) {
+                // 可以快进，推荐快速合并
+                strategyOptions.push({
+                    label: '⚡ 快速合并 (fast-forward) $(star) 推荐',
+                    description: '保持线性历史，当前分支可以直接快进',
+                    value: 'fast-forward',
+                    recommended: true
+                });
+                strategyOptions.push({
+                    label: '🔀 三路合并 (三方合并提交)',
+                    description: '强制创建合并提交，保留分支结构',
+                    value: 'three-way'
+                });
+            } else if (mergeInfo.canFastForward === false || mergeInfo.hasDiverged) {
+                // 不能快进或已分叉，推荐三路合并
+                strategyOptions.push({
+                    label: '🔀 三路合并 (三方合并提交) $(star) 推荐',
+                    description: mergeInfo.hasDiverged
+                        ? `分支已分叉 (${mergeInfo.commitsAhead} 个新提交, ${mergeInfo.commitsBehind} 个不同提交)，建议创建合并提交`
+                        : `无法快进 (${mergeInfo.commitsAhead} 个新提交)，建议创建合并提交`,
+                    value: 'three-way',
+                    recommended: true
+                });
+                strategyOptions.push({
+                    label: '⚡ 快速合并 (fast-forward)',
+                    description: '仅当可以快进时成功（可能失败）',
+                    value: 'fast-forward'
+                });
+            } else {
+                // 无法确定，提供两个选项
+                strategyOptions.push({
+                    label: '⚡ 快速合并 (fast-forward)',
+                    description: '保持线性历史，仅当可以快进时成功',
+                    value: 'fast-forward'
+                });
+                strategyOptions.push({
+                    label: '🔀 三路合并 (三方合并提交)',
+                    description: '创建合并提交，保留分支结构',
+                    value: 'three-way'
+                });
+            }
+
             const strategyPick = await vscode.window.showQuickPick(
-                [
-                    {
-                        label: '⚡ 快速合并 (fast-forward)',
-                        description: '保持线性历史，仅在可快进时成功',
-                        value: 'fast-forward'
-                    },
-                    {
-                        label: '🔀 三路合并 (三方合并提交)',
-                        description: '创建合并提交，保留分支结构',
-                        value: 'three-way'
-                    }
-                ],
-                { placeHolder: '选择合并策略' }
+                strategyOptions,
+                {
+                    placeHolder: mergeInfo.canFastForward === true
+                        ? '✅ 检测到可快进合并，推荐使用快速合并'
+                        : mergeInfo.hasDiverged
+                            ? '⚠️ 分支已分叉，推荐使用三路合并'
+                            : '选择合并策略'
+                }
             );
 
             if (!strategyPick) {
                 return;
             }
 
+            // 构建确认消息
+            const strategyLabel = strategyPick.label.replace(/\s*\$\(star\)\s*推荐\s*/g, '').trim();
+            let confirmMessage = `确定要将 "${branchName}" 以"${strategyLabel}"合并到 "${currentBranch}" 吗？`;
+
+            if (mergeInfo.commitsAhead > 0) {
+                confirmMessage += `\n\n将合并 ${mergeInfo.commitsAhead} 个提交到 ${currentBranch}`;
+            }
+            if (mergeInfo.canFastForward === false && strategyPick.value === 'fast-forward') {
+                confirmMessage += `\n\n⚠️ 警告：此合并可能无法快进，操作可能失败`;
+            }
+
             const confirm = await vscode.window.showWarningMessage(
-                `确定要将 "${branchName}" 以"${strategyPick.label}"合并到 "${currentBranch}" 吗？`,
+                confirmMessage,
                 { modal: true },
                 '合并',
                 '取消'
@@ -517,6 +725,18 @@ export class DashboardPanel {
             const conflicts = conflictsResult.status === 'fulfilled' ? conflictsResult.value : [];
             const tags = tagsResult.status === 'fulfilled' ? tagsResult.value : [];
 
+            // 获取远程标签（如果有远程仓库）
+            let remoteTags: Array<{ name: string; commit: string }> = [];
+            if (remotes.length > 0) {
+                try {
+                    // 获取第一个远程仓库的标签（通常是 origin）
+                    const defaultRemote = remotes[0]?.name || 'origin';
+                    remoteTags = await this.gitService.getRemoteTags(defaultRemote);
+                } catch (error) {
+                    console.warn('获取远程标签失败:', error);
+                }
+            }
+
             const fileStatsArray = fileStatsResult.status === 'fulfilled'
                 ? Array.from(fileStatsResult.value.entries()).map((entry: [string, number]) => ({
                     path: entry[0],
@@ -537,7 +757,11 @@ export class DashboardPanel {
                 : {
                     branches: branches.all || [],
                     merges: [],
-                    currentBranch
+                    currentBranch,
+                    dag: {
+                        nodes: [],
+                        links: []
+                    }
                 };
 
             const timeline = timelineResult.status === 'fulfilled'
@@ -561,10 +785,15 @@ export class DashboardPanel {
                     branchGraph: {
                         branches: resolvedBranchGraph.branches || [],
                         merges: resolvedBranchGraph.merges || [],
-                        currentBranch: resolvedBranchGraph.currentBranch || currentBranch
+                        currentBranch: resolvedBranchGraph.currentBranch || currentBranch,
+                        dag: resolvedBranchGraph.dag || {
+                            nodes: [],
+                            links: []
+                        }
                     },
                     timeline,
                     tags,
+                    remoteTags,
                     repository: repositoryInfo,
                     commandHistory: CommandHistory.getHistory(20),
                     availableCommands: CommandHistory.getAvailableCommands(),
@@ -585,7 +814,7 @@ export class DashboardPanel {
                     conflicts: [],
                     fileStats: [],
                     contributorStats: [],
-                    branchGraph: { branches: [], merges: [], currentBranch: null },
+                    branchGraph: { branches: [], merges: [], currentBranch: null, dag: { nodes: [], links: [] } },
                     timeline: [],
                     tags: [],
                     repository: null,
@@ -789,7 +1018,7 @@ export class DashboardPanel {
             const newName = await vscode.window.showInputBox({
                 prompt: '输入新的远程仓库名称',
                 value: remoteName,
-                validateInput: (value) => {
+                validateInput: (value: string) => {
                     if (!value) {
                         return '远程仓库名称不能为空';
                     }
@@ -809,7 +1038,7 @@ export class DashboardPanel {
                 prompt: '输入新的远程仓库地址',
                 placeHolder: 'https://github.com/username/repo.git',
                 value: currentUrl,
-                validateInput: (value) => {
+                validateInput: (value: string) => {
                     if (!value) {
                         return '远程仓库地址不能为空';
                     }
@@ -942,8 +1171,11 @@ export class DashboardPanel {
 </html>`;
     }
 
-    private _getHtmlForWebview(webview: vscode.Webview, data: any) {
+    private _getHtmlForWebview(webview: vscode.Webview, data: GitData) {
         const { status, branches, log } = data;
+        const safeStatus: GitStatus = status || { modified: [], created: [], deleted: [] };
+        const safeBranches: GitBranches = branches || { all: [], current: null };
+        const safeLog = log || { all: [] };
 
         return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1128,10 +1360,10 @@ export class DashboardPanel {
         <div class="section">
             <div class="section-title">远程仓库</div>
             ${data.remotes && data.remotes.length > 0
-                ? data.remotes.map((remote: any) => `
+                ? data.remotes.map((remote: RemoteInfo) => `
                     <div class="status-item">
                         <span class="status-icon" style="color: #569cd6;">☁️</span>
-                        <span><strong>${remote.name}</strong>: ${remote.refs.fetch}</span>
+                        <span><strong>${remote.name}</strong>: ${remote.refs?.fetch || remote.refs?.push || 'N/A'}</span>
                     </div>
                 `).join('')
                 : '<div class="status-item">⚠️ 尚未添加远程仓库</div>'
@@ -1146,19 +1378,19 @@ export class DashboardPanel {
             <div class="section-title">仓库状态</div>
             <div class="stats">
                 <div class="stat-card">
-                    <div class="stat-value">${status.modified.length}</div>
+                    <div class="stat-value">${safeStatus.modified.length}</div>
                     <div class="stat-label">已修改</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value">${status.created.length}</div>
+                    <div class="stat-value">${safeStatus.created.length}</div>
                     <div class="stat-label">新创建</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value">${status.deleted.length}</div>
+                    <div class="stat-value">${safeStatus.deleted.length}</div>
                     <div class="stat-label">已删除</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value">${branches.all.length}</div>
+                    <div class="stat-value">${safeBranches.all.length}</div>
                     <div class="stat-label">分支总数</div>
                 </div>
             </div>
@@ -1167,22 +1399,22 @@ export class DashboardPanel {
         <!-- 当前状态 -->
         <div class="section">
             <div class="section-title">工作区状态</div>
-            ${status.modified.length === 0 && status.created.length === 0 && status.deleted.length === 0
+            ${safeStatus.modified.length === 0 && safeStatus.created.length === 0 && safeStatus.deleted.length === 0
                 ? '<div class="status-item">✅ 工作区是干净的</div>'
                 : ''}
-            ${status.modified.map((file: string) => `
+            ${safeStatus.modified.map((file: string) => `
                 <div class="status-item">
                     <span class="status-icon modified">M</span>
                     <span>${file}</span>
                 </div>
             `).join('')}
-            ${status.created.map((file: string) => `
+            ${safeStatus.created.map((file: string) => `
                 <div class="status-item">
                     <span class="status-icon created">A</span>
                     <span>${file}</span>
                 </div>
             `).join('')}
-            ${status.deleted.map((file: string) => `
+            ${safeStatus.deleted.map((file: string) => `
                 <div class="status-item">
                     <span class="status-icon deleted">D</span>
                     <span>${file}</span>
@@ -1192,10 +1424,10 @@ export class DashboardPanel {
 
         <!-- 分支列表 -->
         <div class="section">
-            <div class="section-title">分支列表 (当前: ${branches.current})</div>
-            ${branches.all.slice(0, 10).map((branch: string) => `
-                <div class="branch-item ${branch === branches.current ? 'current' : ''}">
-                    ${branch === branches.current ? '✓' : '○'} ${branch}
+            <div class="section-title">分支列表 (当前: ${safeBranches.current || 'N/A'})</div>
+            ${safeBranches.all.slice(0, 10).map((branch: string) => `
+                <div class="branch-item ${branch === safeBranches.current ? 'current' : ''}">
+                    ${branch === safeBranches.current ? '✓' : '○'} ${branch}
                 </div>
             `).join('')}
         </div>
@@ -1203,7 +1435,7 @@ export class DashboardPanel {
         <!-- 提交历史 -->
         <div class="section">
             <div class="section-title">最近提交</div>
-            ${log.all.map((commit: any) => `
+            ${safeLog.all.map((commit: CommitInfo) => `
                 <div class="commit-item">
                     <div class="commit-hash">${commit.hash.substring(0, 8)}</div>
                     <div class="commit-message">${commit.message.split('\n')[0]}</div>

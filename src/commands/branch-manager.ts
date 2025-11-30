@@ -143,22 +143,123 @@ export function registerBranchManager(
                     return;
                 }
 
-                // 确认合并
-                const strategyPick = await vscode.window.showQuickPick(
-                    [
-                        {
-                            label: '⚡ 快速合并 (fast-forward)',
-                            description: '保持线性历史，仅当可以快进时成功',
-                            value: 'fast-forward'
-                        },
-                        {
-                            label: '🔀 三路合并 (三方合并提交)',
-                            description: '创建合并提交，保留分支结构',
-                            value: 'three-way'
-                        }
-                    ],
+                // ========== 合并前状态检查 ==========
+                const status = await gitService.getStatus();
+                const hasUncommittedChanges = status.modified.length > 0 ||
+                    status.created.length > 0 ||
+                    status.deleted.length > 0 ||
+                    status.not_added.length > 0;
+
+                if (hasUncommittedChanges) {
+                    const changeCount = status.modified.length + status.created.length + status.deleted.length + status.not_added.length;
+                    const changeDetails = [
+                        status.modified.length > 0 ? `${status.modified.length} 个已修改文件` : '',
+                        status.created.length > 0 ? `${status.created.length} 个新文件` : '',
+                        status.deleted.length > 0 ? `${status.deleted.length} 个已删除文件` : '',
+                        status.not_added.length > 0 ? `${status.not_added.length} 个未跟踪文件` : ''
+                    ].filter(Boolean).join('、');
+
+                    const choice = await vscode.window.showWarningMessage(
+                        `合并前检测到 ${changeCount} 个未提交的更改 (${changeDetails})。建议先提交或暂存这些更改。`,
+                        { modal: true },
+                        '暂存后继续',
+                        '提交后继续',
+                        '直接合并',
+                        '取消'
+                    );
+
+                    if (!choice || choice === '取消') {
+                        return;
+                    }
+
+                    if (choice === '暂存后继续') {
+                        await gitService.stash(`Stash before merging ${selected.branch}`);
+                        vscode.window.showInformationMessage('✅ 更改已暂存');
+                    } else if (choice === '提交后继续') {
+                        // 提示用户先提交
+                        vscode.window.showWarningMessage(
+                            '请先使用 "Git: 提交所有更改" 命令提交更改，然后再进行合并操作。',
+                            '打开命令面板'
+                        ).then(selected => {
+                            if (selected === '打开命令面板') {
+                                vscode.commands.executeCommand('workbench.action.showCommands');
+                            }
+                        });
+                        return;
+                    }
+                    // '直接合并' 继续执行合并流程
+                }
+
+                // ========== 合并策略智能建议 ==========
+                const mergeInfo = await vscode.window.withProgress(
                     {
-                        placeHolder: '选择合并策略'
+                        location: vscode.ProgressLocation.Notification,
+                        title: '正在分析分支关系...',
+                        cancellable: false
+                    },
+                    async () => {
+                        return await gitService.getBranchMergeInfo(selected.branch);
+                    }
+                );
+
+                // 根据分析结果构建策略选项
+                const strategyOptions: Array<{
+                    label: string;
+                    description: string;
+                    value: 'fast-forward' | 'three-way';
+                    recommended?: boolean;
+                }> = [];
+
+                if (mergeInfo.canFastForward === true) {
+                    // 可以快进，推荐快速合并
+                    strategyOptions.push({
+                        label: '⚡ 快速合并 (fast-forward) $(star) 推荐',
+                        description: '保持线性历史，当前分支可以直接快进',
+                        value: 'fast-forward',
+                        recommended: true
+                    });
+                    strategyOptions.push({
+                        label: '🔀 三路合并 (三方合并提交)',
+                        description: '强制创建合并提交，保留分支结构',
+                        value: 'three-way'
+                    });
+                } else if (mergeInfo.canFastForward === false || mergeInfo.hasDiverged) {
+                    // 不能快进或已分叉，推荐三路合并
+                    strategyOptions.push({
+                        label: '🔀 三路合并 (三方合并提交) $(star) 推荐',
+                        description: mergeInfo.hasDiverged
+                            ? `分支已分叉 (${mergeInfo.commitsAhead} 个新提交, ${mergeInfo.commitsBehind} 个不同提交)，建议创建合并提交`
+                            : `无法快进 (${mergeInfo.commitsAhead} 个新提交)，建议创建合并提交`,
+                        value: 'three-way',
+                        recommended: true
+                    });
+                    strategyOptions.push({
+                        label: '⚡ 快速合并 (fast-forward)',
+                        description: '仅当可以快进时成功（可能失败）',
+                        value: 'fast-forward'
+                    });
+                } else {
+                    // 无法确定，提供两个选项
+                    strategyOptions.push({
+                        label: '⚡ 快速合并 (fast-forward)',
+                        description: '保持线性历史，仅当可以快进时成功',
+                        value: 'fast-forward'
+                    });
+                    strategyOptions.push({
+                        label: '🔀 三路合并 (三方合并提交)',
+                        description: '创建合并提交，保留分支结构',
+                        value: 'three-way'
+                    });
+                }
+
+                const strategyPick = await vscode.window.showQuickPick(
+                    strategyOptions,
+                    {
+                        placeHolder: mergeInfo.canFastForward === true
+                            ? '✅ 检测到可快进合并，推荐使用快速合并'
+                            : mergeInfo.hasDiverged
+                                ? '⚠️ 分支已分叉，推荐使用三路合并'
+                                : '选择合并策略'
                     }
                 );
 
@@ -166,8 +267,19 @@ export function registerBranchManager(
                     return;
                 }
 
+                // 构建确认消息
+                const strategyLabel = strategyPick.label.replace(/\s*\$\(star\)\s*推荐\s*/g, '').trim();
+                let confirmMessage = `确定要将 "${selected.branch}" 以"${strategyLabel}"合并到 "${currentBranch}" 吗？`;
+
+                if (mergeInfo.commitsAhead > 0) {
+                    confirmMessage += `\n\n将合并 ${mergeInfo.commitsAhead} 个提交到 ${currentBranch}`;
+                }
+                if (mergeInfo.canFastForward === false && strategyPick.value === 'fast-forward') {
+                    confirmMessage += `\n\n⚠️ 警告：此合并可能无法快进，操作可能失败`;
+                }
+
                 const confirm = await vscode.window.showWarningMessage(
-                    `确定要将 "${selected.branch}" 以"${strategyPick.label}"合并到 "${currentBranch}" 吗？`,
+                    confirmMessage,
                     { modal: true },
                     '合并',
                     '取消'

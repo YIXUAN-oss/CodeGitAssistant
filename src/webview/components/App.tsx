@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CommitGraph } from './CommitGraph';
 import { HeatmapAnalysis } from './HeatmapAnalysis';
-import { BranchDependencyGraph } from './BranchDependencyGraph';
+import { BranchGraph } from './BranchGraph';
 import { TimelineView } from './TimelineView';
 import { BranchTree } from './BranchTree';
 import { TagManager } from './TagManager';
@@ -15,7 +15,7 @@ import './App.css';
  * 主应用组件
  */
 export const App: React.FC = () => {
-    const [activeTab, setActiveTab] = useState<'graph' | 'heatmap' | 'branch-deps' | 'timeline' | 'branches' | 'tags' | 'remotes' | 'conflicts' | 'commands' | 'command-ref'>('commands');
+    const [activeTab, setActiveTab] = useState<'graph' | 'heatmap' | 'branch-graph' | 'timeline' | 'branches' | 'tags' | 'remotes' | 'conflicts' | 'commands' | 'command-ref'>('commands');
     const [gitData, setGitData] = useState<any>(null);
     const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -66,16 +66,16 @@ export const App: React.FC = () => {
                         📚 Git 指令集
                     </button>
                     <button
-                        className={activeTab === 'branches' ? 'active' : ''}
-                        onClick={() => setActiveTab('branches')}
-                    >
-                        🌿 分支管理
-                    </button>
-                    <button
                         className={activeTab === 'remotes' ? 'active' : ''}
                         onClick={() => setActiveTab('remotes')}
                     >
                         ☁️ 远程仓库
+                    </button>
+                    <button
+                        className={activeTab === 'branches' ? 'active' : ''}
+                        onClick={() => setActiveTab('branches')}
+                    >
+                        🌿 分支管理
                     </button>
                     <button
                         className={activeTab === 'tags' ? 'active' : ''}
@@ -84,10 +84,10 @@ export const App: React.FC = () => {
                         🏷️ 标签管理
                     </button>
                     <button
-                        className={activeTab === 'branch-deps' ? 'active' : ''}
-                        onClick={() => setActiveTab('branch-deps')}
+                        className={activeTab === 'branch-graph' ? 'active' : ''}
+                        onClick={() => setActiveTab('branch-graph')}
                     >
-                        🌳 分支依赖
+                        🌳 分支图
                     </button>
                     <button
                         className={activeTab === 'conflicts' ? 'active' : ''}
@@ -128,7 +128,7 @@ export const App: React.FC = () => {
                     <>
                         {activeTab === 'graph' && <CommitGraph data={gitData} />}
                         {activeTab === 'heatmap' && <HeatmapAnalysis data={gitData} />}
-                        {activeTab === 'branch-deps' && <BranchDependencyGraph data={gitData} />}
+                        {activeTab === 'branch-graph' && <BranchGraph data={gitData} />}
                         {activeTab === 'timeline' && <TimelineView data={gitData} />}
                         {activeTab === 'branches' && <BranchTree data={gitData} />}
                         {activeTab === 'remotes' && <RemoteManager data={gitData} />}

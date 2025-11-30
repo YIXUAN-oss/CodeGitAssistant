@@ -141,7 +141,7 @@ export const CommitGraph: React.FC<{ data: any }> = ({ data }) => {
             ctx.textBaseline = 'top';
             const message = commit.message.split('\n')[0];
 
-            // 文本换行处理，支持中英文混合
+            // 文本换行处理，支持中英文混合，保留空格
             const words = message.split(/(\s+)/);
             let line = '';
             let lineY = y + 5;
@@ -150,10 +150,11 @@ export const CommitGraph: React.FC<{ data: any }> = ({ data }) => {
             let lineCount = 0;
 
             for (let i = 0; i < words.length && lineCount < maxLines; i++) {
-                if (!words[i].trim()) continue; // 跳过空白字符
+                // 保留空格，不要跳过空白字符
                 const testLine = line + words[i];
                 const metrics = ctx.measureText(testLine);
-                if (metrics.width > maxWidth && line) {
+                if (metrics.width > maxWidth && line.trim()) {
+                    // 只有当 line 不为空时才换行
                     ctx.fillText(line, textX, lineY);
                     line = words[i];
                     lineY += lineHeight;
