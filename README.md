@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Git Assistant Logo](resources/git-icon.svg)
+![Git Assistant Logo](resources/git-icon.png)
 
 **强大的Git可视化管理工具，让Git操作更简单、更高效！**
 
@@ -187,32 +187,40 @@ npm run package
 
 ## 🎨 界面预览
 
-### 控制面板
+### 侧边展示
 
+<img src="resources/sidebar.png" width="300" />
 
+### 可视化面板
 
-### 2D提交图谱
+<img src="resources/dashboard.png" width="900" />
 
+### 快捷指令
 
+<img src="resources/quick-actions.png" width="900" />
 
-高DPI优化，字体清晰锐利
+### Git 指令集
 
-### 热力图分析
+<img src="resources/git-reference.png" width="900" />
 
+### 远程仓库
 
-### 分支视图
-
-
-### 时间线视图
-
+<img src="resources/remote-manager.png" width="900" />
 
 ### 分支管理
 
+<img src="resources/branch-manager.png" width="900" />
 
-### 冲突解决
+### 标签管理
 
+<img src="resources/tag-manager.png" width="900" />
 
-### 快捷指令历史
+### 分支视图
+
+<img src="resources/branch-view.png" width="900" />
+
+### 冲突解决、提交图、时间线、热力图
+
 
 
 ## 🏗️ 项目架构

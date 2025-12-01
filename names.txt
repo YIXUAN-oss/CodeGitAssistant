@@ -1,0 +1,10 @@
+dashboard.png
+Git 指令集.png
+git-icon.png
+git-icon.svg
+sidebar.png
+分支管理.png
+分支视图.png
+快捷指令.png
+标签管理.png
+远程仓库.png
