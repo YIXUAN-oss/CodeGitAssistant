@@ -6,7 +6,7 @@
     "publisher": "your-publisher-name",
     "repository": {
         "type": "git",
-        "url": "https://github.com/yourusername/git-assistant.git"
+        "url": "https://github.com/YIXUAN-oss/CodeGitAssistant"
     },
     "engines": {
         "vscode": "^1.80.0"

@@ -87,7 +87,7 @@ export const App: React.FC = () => {
                         className={activeTab === 'branch-graph' ? 'active' : ''}
                         onClick={() => setActiveTab('branch-graph')}
                     >
-                        🌳 分支图
+                        🌳 分支视图
                     </button>
                     <button
                         className={activeTab === 'conflicts' ? 'active' : ''}

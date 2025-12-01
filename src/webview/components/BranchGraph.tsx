@@ -26,7 +26,7 @@ const getRelativeTime = (dateString: string): string => {
 };
 
 /**
- * Git 分支图组件 - 使用 D3.js 可视化 Git 分支的 DAG 结构
+ * Git 分支视图组件 - 使用 D3.js 可视化 Git 分支的 DAG 结构
  */
 export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
     const svgRef = useRef<SVGSVGElement>(null);
@@ -437,7 +437,7 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
         const startX = padding;
 
         // 调试：输出轨道分配信息
-        console.log('=== 分支图轨道分配调试信息 ===');
+        console.log('=== 分支视图轨道分配调试信息 ===');
         console.log(`总提交数: ${nodes.length}, 最大层级: ${maxLevel}`);
         console.log(`所有分支: ${Array.from(branchLaneMap.keys()).join(', ')}`);
         console.log('分支到轨道的映射:', Array.from(branchLaneMap.entries()));
@@ -789,13 +789,13 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
         return (
             <div className="branch-graph">
                 <div className="section-header">
-                    <h2>分支图</h2>
+                    <h2>分支视图</h2>
                     <p className="section-description">
                         使用 D3.js 可视化 Git 分支的有向无环图（DAG）结构
                     </p>
                 </div>
                 <div className="empty-state">
-                    <p>📊 正在加载分支图数据...</p>
+                    <p>📊 正在加载分支视图数据...</p>
                 </div>
             </div>
         );
@@ -808,7 +808,7 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
     return (
         <div className="branch-graph">
             <div className="section-header">
-                <h2>分支图</h2>
+                <h2>分支视图</h2>
                 <p className="section-description">
                     使用 D3.js 可视化 Git 分支的有向无环图（DAG）结构
                 </p>

@@ -48,7 +48,7 @@ CodeGitAssistant/
 │   │       ├── BranchTree.tsx      # 🌿 分支管理
 │   │       ├── RemoteManager.tsx   # ☁️ 远程仓库
 │   │       ├── TagManager.tsx      # 🏷️ 标签管理
-│   │       ├── BranchDependencyGraph.tsx # 🌳 分支依赖图
+│   │       ├── BranchDependencyGraph.tsx # 🌳 分支视图
 │   │       ├── ConflictEditor.tsx  # ⚠️ 冲突解决
 │   │       ├── CommitGraph.tsx     # 📊 2D提交图谱（高DPI优化）
 │   │       ├── TimelineView.tsx    # 📅 时间线（热力图 + 柱状图）
@@ -190,7 +190,7 @@ class GitService {
 3. 🌿 `BranchTree.tsx` – 分支树、创建/切换/合并
 4. ☁️ `RemoteManager.tsx` – 远程列表、添加/重命名/更新 URL/删除
 5. 🏷️ `TagManager.tsx` – 创建带注释/轻量标签、推送单个/全部、删除
-6. 🌳 `BranchDependencyGraph.tsx` – 分支依赖可视化
+6. 🌳 `BranchDependencyGraph.tsx` – 分支视图可视化
 7. ⚠️ `ConflictEditor.tsx` – 冲突列表与三栏对比解决
 8. 📊 `CommitGraph.tsx` – 高 DPI 2D 提交图谱（D3 力导向图）
 9. 📅 `TimelineView.tsx` – 日历热力图 + 柱状图时间线
@@ -207,7 +207,7 @@ class GitService {
 - `logger.ts`: 日志系统（输出到 VS Code Output Channel）
 - `notification.ts`: 通知封装（信息/警告/错误弹窗）
 - `command-history.ts`: 记录并暴露命令执行历史，供 CommandHistory 组件读取
-- `merge-history.ts`: 合并操作记录，用于分支依赖图与时间线分析
+- `merge-history.ts`: 合并操作记录，用于分支视图与时间线分析
 - `constants.ts`: 常量定义（命令 ID、配置键等）
 
 ## 🔄 数据流架构
@@ -250,7 +250,7 @@ VS Code UI（侧边栏 + 控制面板 + 通知）
 | 2D提交图谱 | ✅ | CommitGraph.tsx | D3.js绘制，高DPI优化 |
 | 3D提交图谱 | 🧪 | CommitGraph3D.tsx | Three.js渲染（实验中） |
 | 热力图分析 | ✅ | HeatmapAnalysis.tsx | 文件/贡献者统计，主题适配 |
-| 分支依赖图 | ✅ | BranchDependencyGraph.tsx | 合并关系可视化 |
+| 分支视图 | ✅ | BranchDependencyGraph.tsx | 合并关系可视化 |
 | 时间线视图 | ✅ | TimelineView.tsx | 日历热力图，主题适配 |
 | 冲突检测 | ✅ | conflict-provider.ts | 实时检测 |
 | 冲突解决 | ✅ | conflict-resolver.ts | 三种方案 |

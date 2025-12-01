@@ -874,7 +874,7 @@
     min-height: 400px;
 }
 
-/* 分支依赖图容器 */
+/* 分支视图容器 */
 .branch-dependency-graph .graph-container {
     background: var(--vscode-sideBar-background);
     border: 1px solid var(--vscode-panel-border);
@@ -883,7 +883,7 @@
     overflow: auto;
 }
 
-/* 分支图容器 */
+/* 分支视图容器 */
 .branch-graph {
     padding: 20px;
 }
