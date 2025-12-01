@@ -130,9 +130,12 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
         const nodeMap = new Map<string, any>();
         dag.nodes.forEach((node: any) => {
             const commitInfo = commitInfoMap.get(node.hash) || {};
+            const parents = node.parents || [];
             nodeMap.set(node.hash, {
                 ...node,
                 ...commitInfo,
+                // 由父节点数量自动推断是否为合并提交
+                isMerge: parents.length > 1,
                 // 获取提交消息的第一行
                 shortMessage: commitInfo.message ? commitInfo.message.split('\n')[0].substring(0, 50) : '',
                 // 格式化日期
@@ -328,50 +331,21 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
                     // 检查是否是分叉点（多个子节点从同一个父节点分出）
                     const siblings = childrenMap.get(node.parents[0]) || [];
                     if (siblings.length > 1) {
-                        // 这是分叉点，需要为不同分支分配不同轨道
+                        // 这是分叉点，需要为不同子提交分配不同轨道
                         const sortedSiblings = siblings
                             .slice()
                             .sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
                         const siblingIndex = sortedSiblings.findIndex((s: any) => s.hash === node.hash);
 
-                        // 第一个子节点继承父轨道（通常是主分支）
-                        // 其他子节点（新分支）需要分配新轨道
+                        // 第一个子节点继承父轨道（通常是主分支），其余子节点强制使用新的轨道
                         if (siblingIndex > 0) {
-                            // 查找这个节点属于哪些分支（包括通过提交链推断的）
-                            const nodeBranches = new Set<string>();
-                            branchCommitChains.forEach((commitSet, branchName) => {
-                                if (commitSet.has(node.hash)) {
-                                    nodeBranches.add(branchName);
-                                }
-                            });
-
-                            // 如果节点属于新分支（分支还没有分配轨道），分配新轨道
-                            const hasNewBranch = Array.from(nodeBranches).some((b: string) => !branchLaneMap.has(b));
-                            if (hasNewBranch) {
-                                // 为新分支分配新轨道
-                                const usedLanes = new Set(Array.from(nodeColumnMap.values()));
-                                let newLane = nextLaneId;
-                                while (usedLanes.has(newLane)) {
-                                    newLane++;
-                                }
-                                lane = newLane;
-                                nextLaneId = Math.max(nextLaneId, newLane + 1);
-
-                                // 为新分支记录轨道
-                                nodeBranches.forEach((branchName: string) => {
-                                    if (!branchLaneMap.has(branchName)) {
-                                        branchLaneMap.set(branchName, lane);
-                                    }
-                                });
-                            } else {
-                                // 如果分支已存在，使用分支的轨道
-                                for (const branchName of nodeBranches) {
-                                    if (branchLaneMap.has(branchName)) {
-                                        lane = branchLaneMap.get(branchName)!;
-                                        break;
-                                    }
-                                }
+                            const usedLanes = new Set(Array.from(nodeColumnMap.values()));
+                            let newLane = nextLaneId;
+                            while (usedLanes.has(newLane)) {
+                                newLane++;
                             }
+                            lane = newLane;
+                            nextLaneId = Math.max(nextLaneId, newLane + 1);
                         }
                     } else {
                         // 不是分叉点，但需要检查节点所属的分支
@@ -552,7 +526,7 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
             .attr('x2', (d: any) => d.target.x)
             .attr('y2', (d: any) => d.target.y);
 
-        // 绘制节点（使用已计算的位置）
+        // 绘制节点（使用已计算的位置，禁用节点拖拽）
         const node = g.append('g')
             .attr('class', 'nodes')
             .selectAll('g')
@@ -560,11 +534,7 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
             .enter()
             .append('g')
             .attr('class', 'node')
-            .attr('transform', (d: any) => `translate(${d.x},${d.y})`)
-            .call(d3.drag<SVGGElement, any>()
-                .on('start', dragstarted)
-                .on('drag', dragged)
-                .on('end', dragended) as any);
+            .attr('transform', (d: any) => `translate(${d.x},${d.y})`);
 
         // 节点圆圈
         node.append('circle')
@@ -721,63 +691,6 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
                 tooltip.style('opacity', 0);
             });
 
-
-        // 拖拽函数（更新节点位置和链接）
-        function dragstarted(event: any, d: any) {
-            if (!event.active) return;
-            d.fx = d.x;
-            d.fy = d.y;
-        }
-
-        function dragged(event: any, d: any) {
-            d.fx = event.x;
-            d.fy = event.y;
-
-            // 更新节点位置
-            d3.select(event.sourceEvent.target.parentElement)
-                .attr('transform', `translate(${d.fx},${d.fy})`);
-
-            // 更新所有相关的链接
-            link.each(function (linkData: any) {
-                let needsUpdate = false;
-                let newX1 = linkData.source.x;
-                let newY1 = linkData.source.y;
-                let newX2 = linkData.target.x;
-                let newY2 = linkData.target.y;
-
-                if (linkData.source === d) {
-                    newX1 = d.fx;
-                    newY1 = d.fy;
-                    needsUpdate = true;
-                }
-                if (linkData.target === d) {
-                    newX2 = d.fx;
-                    newY2 = d.fy;
-                    needsUpdate = true;
-                }
-
-                if (needsUpdate) {
-                    d3.select(this)
-                        .attr('x1', newX1)
-                        .attr('y1', newY1)
-                        .attr('x2', newX2)
-                        .attr('y2', newY2);
-                }
-            });
-        }
-
-        function dragended(event: any, d: any) {
-            if (!event.active) return;
-            d.fx = null;
-            d.fy = null;
-
-            // 重新更新所有链接以确保一致性
-            link
-                .attr('x1', (linkData: any) => (linkData.source.fx ?? linkData.source.x))
-                .attr('y1', (linkData: any) => (linkData.source.fy ?? linkData.source.y))
-                .attr('x2', (linkData: any) => (linkData.target.fx ?? linkData.target.x))
-                .attr('y2', (linkData: any) => (linkData.target.fy ?? linkData.target.y));
-        }
 
         // 清理函数
         return () => {
