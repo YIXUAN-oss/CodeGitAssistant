@@ -345,6 +345,56 @@ export class GitService {
     }
 
     /**
+     * 取消暂存指定文件（默认全部）
+     */
+    async unstage(files?: string | string[]): Promise<void> {
+        const git = this.ensureGit();
+        if (files) {
+            const targets = Array.isArray(files) ? files : [files];
+            await git.raw(['reset', 'HEAD', '--', ...targets]);
+        } else {
+            await git.raw(['reset', 'HEAD']);
+        }
+    }
+
+    /**
+     * 放弃指定文件的更改（默认全部）
+     */
+    async discardChanges(files?: string | string[]): Promise<void> {
+        const git = this.ensureGit();
+        if (files) {
+            const targets = Array.isArray(files) ? files : [files];
+            await git.checkout(['--', ...targets]);
+        } else {
+            await git.checkout(['--', '.']);
+        }
+    }
+
+    /**
+     * 提交所有已暂存更改
+     */
+    async commit(message: string): Promise<void> {
+        const git = this.ensureGit();
+        await git.commit(message);
+    }
+
+    /**
+     * 提交所有已跟踪的更改（等同 git commit -a）
+     */
+    async commitTrackedChanges(message: string): Promise<void> {
+        const git = this.ensureGit();
+        await git.raw(['commit', '-am', message]);
+    }
+
+    /**
+     * 软重置到指定提交
+     */
+    async resetSoft(ref: string): Promise<void> {
+        const git = this.ensureGit();
+        await git.reset(['--soft', ref]);
+    }
+
+    /**
      * 获取提交历史
      */
     async getLog(maxCount: number = 100): Promise<LogResult> {
@@ -358,14 +408,6 @@ export class GitService {
     async add(files: string | string[]): Promise<void> {
         const git = this.ensureGit();
         await git.add(files);
-    }
-
-    /**
-     * 提交更改
-     */
-    async commit(message: string): Promise<void> {
-        const git = this.ensureGit();
-        await git.commit(message);
     }
 
     /**

@@ -95,8 +95,16 @@ export class CommandHistory {
 
             // ⚙️ 配置仓库 - 需要仓库，但不需要提交
             { id: 'git-assistant.addRemote', name: '添加远程仓库', description: '添加远程仓库地址 (git remote add)', icon: '☁️', category: 'setup', requires: 'repository' },
-            { id: 'git-assistant.addFiles', name: '添加文件', description: '添加文件到暂存区 (git add)', icon: '➕', category: 'setup', requires: 'repository' },
-            { id: 'git-assistant.commitChanges', name: '提交更改', description: '提交已暂存的更改 (git commit)', icon: '💾', category: 'setup', requires: 'repository' },
+
+            // 📝 更改操作 - 需要仓库
+            { id: 'git-assistant.addFiles', name: '暂存更改', description: '将文件添加到暂存区 (git add)', icon: '➕', category: 'changes', requires: 'repository' },
+            { id: 'git-assistant.unstageFiles', name: '取消暂存', description: '从暂存区移除文件 (git reset HEAD)', icon: '↩️', category: 'changes', requires: 'repository' },
+            { id: 'git-assistant.discardChanges', name: '放弃更改', description: '放弃工作区中的更改 (git checkout)', icon: '🗑️', category: 'changes', requires: 'repository' },
+
+            // 💾 提交操作 - 需要仓库
+            { id: 'git-assistant.commitChanges', name: '提交更改', description: '提交已暂存的更改 (git commit)', icon: '💾', category: 'commit', requires: 'repository' },
+            { id: 'git-assistant.commitAllChanges', name: '提交所有更改', description: '提交所有已跟踪更改 (git commit -a)', icon: '📦', category: 'commit', requires: 'repository' },
+            { id: 'git-assistant.undoLastCommit', name: '撤销上次提交', description: '保留更改撤销最近提交 (git reset HEAD~1 --soft)', icon: '↩️', category: 'commit', requires: 'commits' },
 
             // 🔄 同步操作 - 需要提交
             { id: 'git-assistant.quickPush', name: '快速推送', description: '推送当前分支到远程仓库 (git push)', icon: '📤', category: 'sync', requires: 'commits' },
@@ -106,6 +114,8 @@ export class CommandHistory {
             { id: 'git-assistant.createBranch', name: '创建分支', description: '创建新的Git分支 (git branch)', icon: '🌿', category: 'branch', requires: 'commits' },
             { id: 'git-assistant.switchBranch', name: '切换分支', description: '切换到指定分支 (git checkout)', icon: '🔀', category: 'branch', requires: 'commits' },
             { id: 'git-assistant.mergeBranch', name: '合并分支', description: '合并指定分支到当前分支 (git merge)', icon: '🔗', category: 'branch', requires: 'commits' },
+            { id: 'git-assistant.renameBranch', name: '重命名分支', description: '重命名本地分支 (git branch -m)', icon: '✏️', category: 'branch', requires: 'commits' },
+            { id: 'git-assistant.deleteBranch', name: '删除分支', description: '删除本地分支 (git branch -d)', icon: '🗑️', category: 'branch', requires: 'commits' },
 
             // 🏷️ 标签管理 - 需要提交
             { id: 'git-assistant.createTag', name: '创建标签', description: '创建新的Git标签（版本标记） (git tag)', icon: '🏷️', category: 'tag', requires: 'commits' },
@@ -140,6 +150,18 @@ export class CommandHistory {
                 name: '配置仓库',
                 description: '配置远程仓库和首次提交',
                 icon: '⚙️'
+            },
+            {
+                id: 'changes',
+                name: '更改操作',
+                description: '管理工作区和暂存区',
+                icon: '📝'
+            },
+            {
+                id: 'commit',
+                name: '提交操作',
+                description: '提交更改或撤销最近一次提交',
+                icon: '✅'
             },
             {
                 id: 'sync',

@@ -36,6 +36,125 @@ export function registerCommands(
     // 注册仓库初始化命令
     registerRepositoryInit(context, gitService, branchProvider, historyProvider);
 
+    // QuickPick 选项类型定义
+    type CommitQuickPickItem = vscode.QuickPickItem & {
+        commitType: 'staged' | 'all' | 'stagedOnly';
+    };
+
+    type BranchQuickPickItem = vscode.QuickPickItem & {
+        branchAction: 'create' | 'switch' | 'merge' | 'rename' | 'delete';
+    };
+
+    // 分支视图快捷操作入口（QuickPick 菜单）
+    context.subscriptions.push(
+        vscode.commands.registerCommand('git-assistant.branchQuickActions', async () => {
+            // 一级菜单（类似 VS Code Git 顶层分类）
+            const items: (vscode.QuickPickItem & { action?: string })[] = [
+                { label: '$(cloud-download) 拉取', description: '从远程仓库拉取最新更改', action: 'pull' },
+                { label: '$(cloud-upload) 推送', description: '将本地提交推送到远程仓库', action: 'push' },
+                { label: '$(repo-clone) 克隆', description: '从远程地址克隆新的仓库', action: 'clone' },
+                { label: '$(add) 提交', description: '打开提交相关操作子菜单', action: 'commitMenu' },
+                { label: '$(git-branch) 分支', description: '分支相关操作', action: 'branchMenu' },
+                { label: '$(dashboard) 打开控制面板', description: '使用可视化仪表盘执行更多操作', action: 'dashboard' }
+            ];
+
+            const picked = await vscode.window.showQuickPick(items, {
+                placeHolder: '选择要执行的 Git 操作'
+            });
+
+            if (!picked || !picked.action) {
+                return;
+            }
+
+            switch (picked.action) {
+                case 'pull':
+                    await vscode.commands.executeCommand('git-assistant.quickPull');
+                    break;
+                case 'push':
+                    await vscode.commands.executeCommand('git-assistant.quickPush');
+                    break;
+                case 'clone':
+                    await vscode.commands.executeCommand('git-assistant.quickClone');
+                    break;
+                case 'commitMenu': {
+                    // 二级菜单：提交相关操作（模仿截图中的“提交”子菜单）
+                    const commitItems: CommitQuickPickItem[] = [
+                        { label: '提交', description: '提交已暂存的更改', commitType: 'staged' },
+                        { label: '提交已暂存文件', description: '只提交暂存区中的更改', commitType: 'stagedOnly' },
+                        { label: '全部提交', description: '将所有更改添加到暂存区并提交', commitType: 'all' }
+                    ];
+
+                    const pickedCommit = await vscode.window.showQuickPick<CommitQuickPickItem>(commitItems, {
+                        placeHolder: '选择提交方式'
+                    });
+
+                    if (!pickedCommit) {
+                        return;
+                    }
+
+                    switch (pickedCommit.commitType) {
+                        case 'staged':
+                        case 'stagedOnly':
+                            await vscode.commands.executeCommand('git-assistant.commitChanges');
+                            break;
+                        case 'all':
+                            // 先添加所有文件，再进入提交流程
+                            await vscode.commands.executeCommand('git-assistant.addFiles');
+                            await vscode.commands.executeCommand('git-assistant.commitChanges');
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+                }
+                case 'branchMenu': {
+                    // 二级菜单：分支相关操作
+                    const branchItems: BranchQuickPickItem[] = [
+                        { label: '创建分支', description: '基于当前提交创建新分支', branchAction: 'create' },
+                        { label: '切换分支', description: '切换到其他分支', branchAction: 'switch' },
+                        { label: '合并分支', description: '将其他分支合并到当前分支', branchAction: 'merge' },
+                        { label: '重命名分支', description: '重命名现有本地分支', branchAction: 'rename' },
+                        { label: '删除分支', description: '删除本地分支（不可删除当前分支）', branchAction: 'delete' }
+                    ];
+
+                    const pickedBranch = await vscode.window.showQuickPick<BranchQuickPickItem>(branchItems, {
+                        placeHolder: '选择分支操作'
+                    });
+
+                    if (!pickedBranch) {
+                        return;
+                    }
+
+                    switch (pickedBranch.branchAction) {
+                        case 'create':
+                            await vscode.commands.executeCommand('git-assistant.createBranch');
+                            break;
+                        case 'switch':
+                            await vscode.commands.executeCommand('git-assistant.switchBranch');
+                            break;
+                        case 'merge':
+                            await vscode.commands.executeCommand('git-assistant.mergeBranch');
+                            break;
+                        case 'rename':
+                            await vscode.commands.executeCommand('git-assistant.renameBranch');
+                            break;
+                        case 'delete':
+                            await vscode.commands.executeCommand('git-assistant.deleteBranch');
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+                }
+                case 'dashboard':
+                    await vscode.commands.executeCommand('git-assistant.openDashboard');
+                    break;
+                default:
+                    break;
+            }
+        })
+    );
+
     // 添加文件到暂存区
     context.subscriptions.push(
         vscode.commands.registerCommand('git-assistant.addFiles', async () => {
@@ -165,7 +284,10 @@ export function registerCommands(
                 // 获取仓库状态
                 const status = await gitService.getStatus();
                 const hasStagedFiles = (status.staged?.length || 0) > 0 ||
-                    status.files?.some((f: any) => f.index !== ' ' && f.index !== '?') || false;
+                    (status.files?.some((f) => {
+                        return f && typeof f === 'object' && 'index' in f &&
+                            f.index !== ' ' && f.index !== '?';
+                    }) || false);
 
                 if (!hasStagedFiles) {
                     vscode.window.showWarningMessage('没有已暂存的文件。请先使用"添加文件"命令将文件添加到暂存区。');

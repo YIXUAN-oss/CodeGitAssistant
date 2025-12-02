@@ -4,6 +4,7 @@ import { BranchProvider } from '../providers/branch-provider';
 import { HistoryProvider } from '../providers/history-provider';
 import { Logger } from '../utils/logger';
 import { CommandHistory } from '../utils/command-history';
+import { DashboardPanel } from '../webview/dashboard-panel';
 
 /**
  * 注册Git操作命令（Push, Pull, Clone）
@@ -385,6 +386,337 @@ export function registerGitOperations(
 
             } catch (error) {
                 vscode.window.showErrorMessage(`克隆失败: ${error}`);
+            }
+        })
+    );
+
+    // 取消暂存文件
+    context.subscriptions.push(
+        vscode.commands.registerCommand('git-assistant.unstageFiles', async () => {
+            try {
+                const isRepo = await gitService.isRepository();
+                if (!isRepo) {
+                    vscode.window.showWarningMessage('当前工作区不是Git仓库，无法取消暂存。');
+                    return;
+                }
+
+                const status = await gitService.getStatus();
+                const stagedFiles =
+                    status.files
+                        ?.filter(file => file.index && file.index !== ' ' && file.index !== '?')
+                        .map(file => file.path) || [];
+
+                if (stagedFiles.length === 0) {
+                    vscode.window.showInformationMessage('暂无已暂存的文件。');
+                    return;
+                }
+
+                const choice = await vscode.window.showQuickPick(
+                    [
+                        { label: '取消所有暂存', description: 'git reset HEAD', value: 'all' },
+                        { label: '选择文件', description: 'git reset HEAD <file>', value: 'select' }
+                    ],
+                    { placeHolder: '选择取消暂存方式' }
+                );
+
+                if (!choice) {
+                    return;
+                }
+
+                if (choice.value === 'all') {
+                    await vscode.window.withProgress(
+                        {
+                            location: vscode.ProgressLocation.Notification,
+                            title: '正在取消所有暂存...',
+                            cancellable: false
+                        },
+                        async () => {
+                            await gitService.unstage();
+                        }
+                    );
+
+                    vscode.window.showInformationMessage('✅ 已取消所有已暂存文件');
+                    CommandHistory.addCommand('git reset HEAD', '取消暂存', true);
+                } else {
+                    const selected = await vscode.window.showQuickPick(
+                        stagedFiles.map(file => ({ label: file, value: file })),
+                        {
+                            placeHolder: '选择要取消暂存的文件',
+                            canPickMany: true
+                        }
+                    );
+
+                    if (!selected || selected.length === 0) {
+                        return;
+                    }
+
+                    await vscode.window.withProgress(
+                        {
+                            location: vscode.ProgressLocation.Notification,
+                            title: '正在取消选中文件的暂存...',
+                            cancellable: false
+                        },
+                        async () => {
+                            await gitService.unstage(selected.map(item => item.value));
+                        }
+                    );
+
+                    vscode.window.showInformationMessage(`✅ 已取消 ${selected.length} 个文件的暂存`);
+                    CommandHistory.addCommand(
+                        `git reset HEAD -- ${selected.map(item => item.value).join(' ')}`,
+                        '取消暂存',
+                        true
+                    );
+                }
+
+                branchProvider.refresh();
+                historyProvider.refresh();
+                DashboardPanel.refresh();
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(`取消暂存失败: ${errorMessage}`);
+                CommandHistory.addCommand('git reset HEAD', '取消暂存', false, errorMessage);
+            }
+        })
+    );
+
+    // 放弃更改
+    context.subscriptions.push(
+        vscode.commands.registerCommand('git-assistant.discardChanges', async () => {
+            try {
+                const isRepo = await gitService.isRepository();
+                if (!isRepo) {
+                    vscode.window.showWarningMessage('当前工作区不是Git仓库，无法放弃更改。');
+                    return;
+                }
+
+                const status = await gitService.getStatus();
+                const discardableFiles = [
+                    ...(status.modified || []),
+                    ...(status.deleted || [])
+                ];
+
+                if (discardableFiles.length === 0) {
+                    vscode.window.showInformationMessage('没有可放弃的更改。');
+                    return;
+                }
+
+                const choice = await vscode.window.showQuickPick(
+                    [
+                        { label: '放弃所有更改', description: 'git checkout -- .', value: 'all' },
+                        { label: '选择文件', description: 'git checkout -- <file>', value: 'select' }
+                    ],
+                    { placeHolder: '选择放弃方式' }
+                );
+
+                if (!choice) {
+                    return;
+                }
+
+                if (choice.value === 'all') {
+                    const confirm = await vscode.window.showWarningMessage(
+                        '将放弃所有已跟踪文件的修改，且无法恢复。确定继续？',
+                        { modal: true },
+                        '放弃',
+                        '取消'
+                    );
+
+                    if (confirm !== '放弃') {
+                        return;
+                    }
+
+                    await vscode.window.withProgress(
+                        {
+                            location: vscode.ProgressLocation.Notification,
+                            title: '正在放弃所有更改...',
+                            cancellable: false
+                        },
+                        async () => {
+                            await gitService.discardChanges();
+                        }
+                    );
+
+                    vscode.window.showInformationMessage('✅ 已放弃所有已跟踪文件的更改');
+                    CommandHistory.addCommand('git checkout -- .', '放弃更改', true);
+                } else {
+                    const selected = await vscode.window.showQuickPick(
+                        discardableFiles.map(file => ({ label: file, value: file })),
+                        {
+                            placeHolder: '选择要放弃更改的文件',
+                            canPickMany: true
+                        }
+                    );
+
+                    if (!selected || selected.length === 0) {
+                        return;
+                    }
+
+                    const confirm = await vscode.window.showWarningMessage(
+                        `将放弃 ${selected.length} 个文件的更改，且无法恢复。确定继续？`,
+                        { modal: true },
+                        '放弃',
+                        '取消'
+                    );
+
+                    if (confirm !== '放弃') {
+                        return;
+                    }
+
+                    await vscode.window.withProgress(
+                        {
+                            location: vscode.ProgressLocation.Notification,
+                            title: '正在放弃选中文件的更改...',
+                            cancellable: false
+                        },
+                        async () => {
+                            await gitService.discardChanges(selected.map(item => item.value));
+                        }
+                    );
+
+                    vscode.window.showInformationMessage(`✅ 已放弃 ${selected.length} 个文件的更改`);
+                    CommandHistory.addCommand(
+                        `git checkout -- ${selected.map(item => item.value).join(' ')}`,
+                        '放弃更改',
+                        true
+                    );
+                }
+
+                branchProvider.refresh();
+                historyProvider.refresh();
+                DashboardPanel.refresh();
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(`放弃更改失败: ${errorMessage}`);
+                CommandHistory.addCommand('git checkout -- .', '放弃更改', false, errorMessage);
+            }
+        })
+    );
+
+    // 提交所有已跟踪更改（git commit -a）
+    context.subscriptions.push(
+        vscode.commands.registerCommand('git-assistant.commitAllChanges', async () => {
+            try {
+                const isRepo = await gitService.isRepository();
+                if (!isRepo) {
+                    vscode.window.showWarningMessage('当前工作区不是Git仓库，无法提交。');
+                    return;
+                }
+
+                const status = await gitService.getStatus();
+                const hasChanges =
+                    (status.modified?.length || 0) > 0 ||
+                    (status.deleted?.length || 0) > 0;
+
+                if (!hasChanges) {
+                    vscode.window.showInformationMessage('当前没有可提交的已跟踪更改。');
+                    return;
+                }
+
+                const message = await vscode.window.showInputBox({
+                    prompt: '输入提交信息（提交所有更改）',
+                    placeHolder: '例如：chore: 更新配置',
+                    validateInput: (value) => {
+                        if (!value?.trim()) {
+                            return '请输入提交信息';
+                        }
+                        if (value.trim().length > 200) {
+                            return '提交信息不能超过200个字符';
+                        }
+                        return null;
+                    }
+                });
+
+                if (!message) {
+                    return;
+                }
+
+                const trimmedMessage = message.trim();
+
+                await vscode.window.withProgress(
+                    {
+                        location: vscode.ProgressLocation.Notification,
+                        title: '正在提交所有更改...',
+                        cancellable: false
+                    },
+                    async () => {
+                        await gitService.commitTrackedChanges(trimmedMessage);
+                    }
+                );
+
+                vscode.window.showInformationMessage('✅ 已提交所有已跟踪的更改');
+                CommandHistory.addCommand(
+                    `git commit -am "${trimmedMessage}"`,
+                    '提交所有更改',
+                    true
+                );
+
+                branchProvider.refresh();
+                historyProvider.refresh();
+                DashboardPanel.refresh();
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(`提交失败: ${errorMessage}`);
+                // 这里无法安全获取用户输入的信息，使用占位命令记录历史
+                CommandHistory.addCommand(
+                    'git commit -am "<message>"',
+                    '提交所有更改',
+                    false,
+                    errorMessage
+                );
+            }
+        })
+    );
+
+    // 撤销上次提交（软重置）
+    context.subscriptions.push(
+        vscode.commands.registerCommand('git-assistant.undoLastCommit', async () => {
+            try {
+                const isRepo = await gitService.isRepository();
+                if (!isRepo) {
+                    vscode.window.showWarningMessage('当前工作区不是Git仓库，无法撤销提交。');
+                    return;
+                }
+
+                const log = await gitService.getLog(1);
+                const hasCommits = log.all && log.all.length > 0;
+
+                if (!hasCommits) {
+                    vscode.window.showInformationMessage('还没有任何提交可撤销。');
+                    return;
+                }
+
+                const confirm = await vscode.window.showWarningMessage(
+                    '该操作会撤销最近一次提交，但保留更改在暂存区。确定继续？',
+                    { modal: true },
+                    '撤销提交',
+                    '取消'
+                );
+
+                if (confirm !== '撤销提交') {
+                    return;
+                }
+
+                await vscode.window.withProgress(
+                    {
+                        location: vscode.ProgressLocation.Notification,
+                        title: '正在撤销上次提交...',
+                        cancellable: false
+                    },
+                    async () => {
+                        await gitService.resetSoft('HEAD~1');
+                    }
+                );
+
+                vscode.window.showInformationMessage('✅ 已撤销最近一次提交（更改已保留在暂存区）');
+                CommandHistory.addCommand('git reset HEAD~1 --soft', '撤销上次提交', true);
+
+                branchProvider.refresh();
+                historyProvider.refresh();
+                DashboardPanel.refresh();
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(`撤销提交失败: ${errorMessage}`);
+                CommandHistory.addCommand('git reset HEAD~1 --soft', '撤销上次提交', false, errorMessage);
             }
         })
     );

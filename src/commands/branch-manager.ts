@@ -323,20 +323,92 @@ export function registerBranchManager(
         })
     );
 
+    // 重命名分支
+    context.subscriptions.push(
+        vscode.commands.registerCommand('git-assistant.renameBranch', async () => {
+            try {
+                const branches = await gitService.getBranches();
+                const currentBranch = branches.current;
+
+                if (!branches.all || branches.all.length === 0) {
+                    vscode.window.showInformationMessage('当前仓库没有可重命名的分支');
+                    return;
+                }
+
+                const items = branches.all.map(branch => ({
+                    label: branch === currentBranch ? `$(check) ${branch}` : `$(git-branch) ${branch}`,
+                    description: branch === currentBranch ? '当前分支' : '',
+                    branch
+                }));
+
+                const selected = await vscode.window.showQuickPick(items, {
+                    placeHolder: '选择要重命名的分支'
+                });
+
+                if (!selected) {
+                    return;
+                }
+
+                const newName = await vscode.window.showInputBox({
+                    prompt: `输入分支 "${selected.branch}" 的新名称`,
+                    value: selected.branch,
+                    placeHolder: 'feature/new-name',
+                    validateInput: (value) => {
+                        if (!value) {
+                            return '分支名称不能为空';
+                        }
+                        if (value === selected.branch) {
+                            return '新名称不能与原名称相同';
+                        }
+                        if (!/^[a-zA-Z0-9/_-]+$/.test(value)) {
+                            return '分支名称只能包含字母、数字、下划线和横线';
+                        }
+                        return null;
+                    }
+                });
+
+                if (!newName) {
+                    return;
+                }
+
+                // 如果选中的是当前分支，使用 renameCurrentBranch；否则指定旧分支名
+                if (selected.branch === currentBranch) {
+                    await gitService.renameCurrentBranch(newName);
+                } else {
+                    await gitService.renameBranch(selected.branch, newName);
+                }
+
+                vscode.window.showInformationMessage(`✅ 分支 "${selected.branch}" 已重命名为 "${newName}"`);
+                branchProvider.refresh();
+                DashboardPanel.refresh();
+
+            } catch (error) {
+                vscode.window.showErrorMessage(`重命名分支失败: ${error}`);
+            }
+        })
+    );
+
     // 删除分支
     context.subscriptions.push(
         vscode.commands.registerCommand('git-assistant.deleteBranch', async (branchName?: string) => {
             try {
+                const branches = await gitService.getBranches();
+                const currentBranch = branches.current;
+
                 let targetBranch = branchName;
 
                 if (!targetBranch) {
-                    const branches = await gitService.getBranches();
                     const items = branches.all
-                        .filter(b => b !== branches.current)
+                        .filter(b => b !== currentBranch)
                         .map(branch => ({
                             label: `$(git-branch) ${branch}`,
                             branch: branch
                         }));
+
+                    if (items.length === 0) {
+                        vscode.window.showInformationMessage('没有可删除的本地分支（不能删除当前分支）');
+                        return;
+                    }
 
                     const selected = await vscode.window.showQuickPick(items, {
                         placeHolder: '选择要删除的分支'
@@ -348,8 +420,13 @@ export function registerBranchManager(
                     targetBranch = selected.branch;
                 }
 
+                if (targetBranch === currentBranch) {
+                    vscode.window.showWarningMessage('不能删除当前所在的分支，请先切换到其他分支。');
+                    return;
+                }
+
                 const confirm = await vscode.window.showWarningMessage(
-                    `确定要删除分支 "${targetBranch}" 吗？`,
+                    `确定要删除分支 "${targetBranch}" 吗？此操作可能无法恢复。`,
                     { modal: true },
                     '删除',
                     '取消'

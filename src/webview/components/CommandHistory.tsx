@@ -34,7 +34,7 @@ export const CommandHistory: React.FC<{ data: any }> = ({ data }) => {
     const [history, setHistory] = useState<CommandHistoryItem[]>([]);
     const [availableCommands, setAvailableCommands] = useState<Command[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
-    const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['init', 'tools']));
+    const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
     const [isClearingHistory, setIsClearingHistory] = useState<boolean>(false);
     const previousHistoryLengthRef = useRef<number>(0);
     const [repositoryState, setRepositoryState] = useState<{
@@ -134,6 +134,7 @@ export const CommandHistory: React.FC<{ data: any }> = ({ data }) => {
         }
         setExpandedCategories(newExpanded);
     };
+
 
     // 判断命令是否可用
     const isCommandAvailable = (command: Command): boolean => {
@@ -306,6 +307,7 @@ export const CommandHistory: React.FC<{ data: any }> = ({ data }) => {
                 </div>
             </div>
 
+
             {/* 分类命令列表 */}
             <div style={{ marginBottom: '30px' }}>
                 <h3 style={{ marginBottom: '15px', fontSize: '16px', color: 'var(--vscode-textLink-foreground)' }}>
@@ -373,69 +375,71 @@ export const CommandHistory: React.FC<{ data: any }> = ({ data }) => {
 
                             {/* 分类内容（可折叠） */}
                             {isExpanded && (
-                                <div style={{
-                                    padding: '15px',
-                                    display: 'grid',
-                                    gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-                                    gap: '12px'
-                                }}>
-                                    {commands.map((cmd) => {
-                                        const isAvailable = isCommandAvailable(cmd);
-                                        return (
-                                            <div
-                                                key={cmd.id}
-                                                onClick={() => isAvailable && executeCommand(cmd.id)}
-                                                style={{
-                                                    padding: '12px 16px',
-                                                    background: isAvailable
-                                                        ? 'var(--vscode-button-secondaryBackground)'
-                                                        : 'var(--vscode-list-inactiveSelectionBackground)',
-                                                    border: `1px solid ${isAvailable ? 'var(--vscode-panel-border)' : 'var(--vscode-panel-border)'}`,
-                                                    borderRadius: '6px',
-                                                    cursor: isAvailable ? 'pointer' : 'not-allowed',
-                                                    transition: 'all 0.2s',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '10px',
-                                                    opacity: isAvailable ? 1 : 0.6
-                                                }}
-                                                onMouseEnter={(e) => {
-                                                    if (isAvailable) {
-                                                        (e.currentTarget as any).style.background = 'var(--vscode-button-secondaryHoverBackground)';
-                                                        (e.currentTarget as any).style.borderColor = 'var(--vscode-focusBorder)';
-                                                    }
-                                                }}
-                                                onMouseLeave={(e) => {
-                                                    if (isAvailable) {
-                                                        (e.currentTarget as any).style.background = 'var(--vscode-button-secondaryBackground)';
-                                                        (e.currentTarget as any).style.borderColor = 'var(--vscode-panel-border)';
-                                                    }
-                                                }}
-                                                title={!isAvailable ? '当前状态不可用此命令' : cmd.description}
-                                            >
-                                                <span style={{ fontSize: '20px' }}>{cmd.icon}</span>
-                                                <div style={{ flex: 1 }}>
-                                                    <div style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '4px' }}>
-                                                        {cmd.name}
-                                                        {!isAvailable && <span style={{ fontSize: '10px', marginLeft: '5px', color: 'var(--vscode-descriptionForeground)' }}>(不可用)</span>}
-                                                    </div>
-                                                    <div style={{ fontSize: '11px', color: 'var(--vscode-descriptionForeground)' }}>
-                                                        {cmd.description.split(' (')[0]}
-                                                        {cmd.description.includes('(') && (
-                                                            <span style={{
-                                                                color: 'var(--vscode-textLink-foreground)',
-                                                                fontFamily: 'monospace',
-                                                                fontSize: '10px',
-                                                                marginLeft: '4px'
-                                                            }}>
-                                                                {cmd.description.match(/\(([^)]+)\)/)?.[1]}
-                                                            </span>
-                                                        )}
+                                <div style={{ padding: '15px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                    {/* 命令网格 */}
+                                    <div style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                                        gap: '12px'
+                                    }}>
+                                        {commands.map((cmd) => {
+                                            const isAvailable = isCommandAvailable(cmd);
+                                            return (
+                                                <div
+                                                    key={cmd.id}
+                                                    onClick={() => isAvailable && executeCommand(cmd.id)}
+                                                    style={{
+                                                        padding: '12px 16px',
+                                                        background: isAvailable
+                                                            ? 'var(--vscode-button-secondaryBackground)'
+                                                            : 'var(--vscode-list-inactiveSelectionBackground)',
+                                                        border: `1px solid ${isAvailable ? 'var(--vscode-panel-border)' : 'var(--vscode-panel-border)'}`,
+                                                        borderRadius: '6px',
+                                                        cursor: isAvailable ? 'pointer' : 'not-allowed',
+                                                        transition: 'all 0.2s',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '10px',
+                                                        opacity: isAvailable ? 1 : 0.6
+                                                    }}
+                                                    onMouseEnter={(e) => {
+                                                        if (isAvailable) {
+                                                            (e.currentTarget as any).style.background = 'var(--vscode-button-secondaryHoverBackground)';
+                                                            (e.currentTarget as any).style.borderColor = 'var(--vscode-focusBorder)';
+                                                        }
+                                                    }}
+                                                    onMouseLeave={(e) => {
+                                                        if (isAvailable) {
+                                                            (e.currentTarget as any).style.background = 'var(--vscode-button-secondaryBackground)';
+                                                            (e.currentTarget as any).style.borderColor = 'var(--vscode-panel-border)';
+                                                        }
+                                                    }}
+                                                    title={!isAvailable ? '当前状态不可用此命令' : cmd.description}
+                                                >
+                                                    <span style={{ fontSize: '20px' }}>{cmd.icon}</span>
+                                                    <div style={{ flex: 1 }}>
+                                                        <div style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '4px' }}>
+                                                            {cmd.name}
+                                                            {!isAvailable && <span style={{ fontSize: '10px', marginLeft: '5px', color: 'var(--vscode-descriptionForeground)' }}>(不可用)</span>}
+                                                        </div>
+                                                        <div style={{ fontSize: '11px', color: 'var(--vscode-descriptionForeground)' }}>
+                                                            {cmd.description.split(' (')[0]}
+                                                            {cmd.description.includes('(') && (
+                                                                <span style={{
+                                                                    color: 'var(--vscode-textLink-foreground)',
+                                                                    fontFamily: 'monospace',
+                                                                    fontSize: '10px',
+                                                                    marginLeft: '4px'
+                                                                }}>
+                                                                    {cmd.description.match(/\(([^)]+)\)/)?.[1]}
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        );
-                                    })}
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             )}
                         </div>

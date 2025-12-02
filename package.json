@@ -89,6 +89,16 @@
                 "icon": "$(git-merge)"
             },
             {
+                "command": "git-assistant.renameBranch",
+                "title": "Git Assistant: 重命名分支",
+                "icon": "$(edit)"
+            },
+            {
+                "command": "git-assistant.deleteBranch",
+                "title": "Git Assistant: 删除分支",
+                "icon": "$(trash)"
+            },
+            {
                 "command": "git-assistant.showHistory",
                 "title": "Git Assistant: 查看提交历史",
                 "icon": "$(history)"
@@ -107,6 +117,11 @@
                 "command": "git-assistant.openDashboard",
                 "title": "Git Assistant: 打开控制面板",
                 "icon": "$(dashboard)"
+            },
+            {
+                "command": "git-assistant.branchQuickActions",
+                "title": "Git Assistant: 分支视图快捷操作",
+                "icon": "$(rocket)"
             }
         ],
         "viewsContainers": {
@@ -139,7 +154,12 @@
                 {
                     "command": "git-assistant.refreshBranches",
                     "when": "view == git-assistant.branchView",
-                    "group": "navigation"
+                    "group": "navigation@2"
+                },
+                {
+                    "command": "git-assistant.branchQuickActions",
+                    "when": "view == git-assistant.branchView",
+                    "group": "navigation@1"
                 }
             ],
             "commandPalette": [
