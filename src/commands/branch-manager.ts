@@ -325,7 +325,7 @@ export function registerBranchManager(
 
     // 重命名分支
     context.subscriptions.push(
-        vscode.commands.registerCommand('git-assistant.renameBranch', async () => {
+        vscode.commands.registerCommand('git-assistant.renameBranch', async (branchName?: string) => {
             try {
                 const branches = await gitService.getBranches();
                 const currentBranch = branches.current;
@@ -335,29 +335,34 @@ export function registerBranchManager(
                     return;
                 }
 
-                const items = branches.all.map(branch => ({
-                    label: branch === currentBranch ? `$(check) ${branch}` : `$(git-branch) ${branch}`,
-                    description: branch === currentBranch ? '当前分支' : '',
-                    branch
-                }));
+                let targetBranch = branchName;
 
-                const selected = await vscode.window.showQuickPick(items, {
-                    placeHolder: '选择要重命名的分支'
-                });
+                if (!targetBranch) {
+                    const items = branches.all.map(branch => ({
+                        label: branch === currentBranch ? `$(check) ${branch}` : `$(git-branch) ${branch}`,
+                        description: branch === currentBranch ? '当前分支' : '',
+                        branch
+                    }));
 
-                if (!selected) {
-                    return;
+                    const selected = await vscode.window.showQuickPick(items, {
+                        placeHolder: '选择要重命名的分支'
+                    });
+
+                    if (!selected) {
+                        return;
+                    }
+                    targetBranch = selected.branch;
                 }
 
                 const newName = await vscode.window.showInputBox({
-                    prompt: `输入分支 "${selected.branch}" 的新名称`,
-                    value: selected.branch,
+                    prompt: `输入分支 "${targetBranch}" 的新名称`,
+                    value: targetBranch,
                     placeHolder: 'feature/new-name',
                     validateInput: (value) => {
                         if (!value) {
                             return '分支名称不能为空';
                         }
-                        if (value === selected.branch) {
+                        if (value === targetBranch) {
                             return '新名称不能与原名称相同';
                         }
                         if (!/^[a-zA-Z0-9/_-]+$/.test(value)) {
@@ -371,14 +376,14 @@ export function registerBranchManager(
                     return;
                 }
 
-                // 如果选中的是当前分支，使用 renameCurrentBranch；否则指定旧分支名
-                if (selected.branch === currentBranch) {
+                // 如果目标分支是当前分支，使用 renameCurrentBranch；否则指定旧分支名
+                if (targetBranch === currentBranch) {
                     await gitService.renameCurrentBranch(newName);
                 } else {
-                    await gitService.renameBranch(selected.branch, newName);
+                    await gitService.renameBranch(targetBranch, newName);
                 }
 
-                vscode.window.showInformationMessage(`✅ 分支 "${selected.branch}" 已重命名为 "${newName}"`);
+                vscode.window.showInformationMessage(`✅ 分支 "${targetBranch}" 已重命名为 "${newName}"`);
                 branchProvider.refresh();
                 DashboardPanel.refresh();
 
@@ -425,19 +430,43 @@ export function registerBranchManager(
                     return;
                 }
 
-                const confirm = await vscode.window.showWarningMessage(
-                    `确定要删除分支 "${targetBranch}" 吗？此操作可能无法恢复。`,
-                    { modal: true },
-                    '删除',
-                    '取消'
-                );
+                // 判断分支是否已合并到当前分支，用于给出更友好的安全提示
+                const isMerged = await gitService.isBranchMergedIntoCurrent(targetBranch);
 
-                if (confirm !== '删除') {
-                    return;
+                let confirm: string | undefined;
+
+                if (isMerged) {
+                    // 已合并分支：正常删除提示，说明删除不会丢失已合并到当前分支的内容
+                    confirm = await vscode.window.showWarningMessage(
+                        `分支 "${targetBranch}" 已合并到当前分支 "${currentBranch}"。\n\n删除该分支不会丢失已合并到当前分支的提交，是否继续？`,
+                        { modal: true },
+                        '删除',
+                        '取消'
+                    );
+
+                    if (confirm !== '删除') {
+                        return;
+                    }
+
+                    await gitService.deleteBranch(targetBranch, false);
+                    vscode.window.showInformationMessage(`✅ 已删除已合并分支 "${targetBranch}"`);
+                } else {
+                    // 未合并分支：提示风险，并提供“强制删除”选项
+                    confirm = await vscode.window.showWarningMessage(
+                        `⚠️ 分支 "${targetBranch}" 尚未完全合并到当前分支 "${currentBranch}"。\n\n强制删除可能导致该分支上的未合并提交无法通过普通方式找回（仍可通过 reflog 等方式手动恢复）。\n\n确定要强制删除该分支吗？`,
+                        { modal: true },
+                        '强制删除（未合并）',
+                        '取消'
+                    );
+
+                    if (confirm !== '强制删除（未合并）') {
+                        return;
+                    }
+
+                    await gitService.deleteBranch(targetBranch, true);
+                    vscode.window.showInformationMessage(`✅ 已强制删除未合并分支 "${targetBranch}"`);
                 }
 
-                await gitService.deleteBranch(targetBranch);
-                vscode.window.showInformationMessage(`✅ 分支 "${targetBranch}" 已删除`);
                 branchProvider.refresh();
                 DashboardPanel.refresh();
 

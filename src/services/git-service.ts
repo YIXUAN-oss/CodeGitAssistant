@@ -309,6 +309,31 @@ export class GitService {
     }
 
     /**
+     * 判断指定分支是否已经合并到当前分支（用于安全删除提示）
+     * 等价于判断该分支是否出现在 `git branch --merged` 列表中
+     */
+    async isBranchMergedIntoCurrent(branchName: string): Promise<boolean> {
+        try {
+            const git = this.ensureGit();
+            const output = await git.raw(['branch', '--merged']);
+            if (!output || !output.trim()) {
+                return false;
+            }
+
+            const mergedBranches = output
+                .split('\n')
+                .map(line => line.replace('*', '').trim())
+                .filter(Boolean);
+
+            return mergedBranches.includes(branchName);
+        } catch (error) {
+            console.warn('检查分支是否已合并失败:', error);
+            // 出错时返回 false，让上层用更保守的提示逻辑
+            return false;
+        }
+    }
+
+    /**
      * 重命名当前分支
      */
     async renameCurrentBranch(newName: string): Promise<void> {

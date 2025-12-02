@@ -121,7 +121,7 @@
             {
                 "command": "git-assistant.branchQuickActions",
                 "title": "Git Assistant: 分支视图快捷操作",
-                "icon": "$(rocket)"
+                "icon": "$(kebab-horizontal)"
             }
         ],
         "viewsContainers": {
@@ -213,6 +213,11 @@
                     "type": "boolean",
                     "default": true,
                     "description": "启用冲突高亮显示"
+                },
+                "git-assistant.defaultRemote": {
+                    "type": "string",
+                    "default": "",
+                    "description": "快速推送/拉取等操作时优先使用的远程名称（留空则自动选择）"
                 }
             }
         }

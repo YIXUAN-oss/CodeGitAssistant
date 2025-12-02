@@ -27,6 +27,33 @@ export const BranchTree: React.FC<{ data: any }> = ({ data }) => {
     const mergeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const isMergingRef = useRef<boolean>(false);
 
+    // 重命名/删除/更多操作（无需复杂状态跟踪，交给扩展端处理提示与刷新）
+    const handleRenameBranch = (branchName: string) => {
+        vscode.postMessage({
+            command: 'renameBranch',
+            branch: branchName
+        });
+    };
+
+    const handleDeleteBranch = (branchName: string) => {
+        vscode.postMessage({
+            command: 'deleteBranch',
+            branch: branchName
+        });
+    };
+
+    /**
+     * 打开“分支更多操作”菜单
+     * 为了与 VS Code Git 菜单的体验保持一致，真正的弹窗在扩展侧通过 showQuickPick 实现
+     */
+    const handleBranchMoreActions = (branchName: string, isCurrent: boolean) => {
+        vscode.postMessage({
+            command: 'branchActions',
+            branch: branchName,
+            isCurrent
+        });
+    };
+
     const handleBranchClick = (branchName: string) => {
         setSelectedBranch(branchName);
     };
@@ -386,28 +413,18 @@ export const BranchTree: React.FC<{ data: any }> = ({ data }) => {
                                         <span className="branch-badge">当前</span>
                                     )}
                                 </div>
-                                {branch !== currentBranch && (
-                                    <div className="branch-actions">
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleSwitchBranch(branch);
-                                            }}
-                                            title="切换到此分支"
-                                        >
-                                            🔀
-                                        </button>
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleMergeBranch(branch);
-                                            }}
-                                            title="合并此分支"
-                                        >
-                                            🔗
-                                        </button>
-                                    </div>
-                                )}
+                                <div className="branch-actions">
+                                    {/* 单一“更多操作”入口，点击后在扩展端弹出 QuickPick 菜单 */}
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleBranchMoreActions(branch, branch === currentBranch);
+                                        }}
+                                        title="查看更多分支操作"
+                                    >
+                                        ⋯
+                                    </button>
+                                </div>
                             </div>
                         ))
                     ) : (

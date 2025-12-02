@@ -295,6 +295,210 @@ export function registerRepositoryInit(
         })
     );
 
+    // 切换默认远程（用于快速推送 / 拉取等操作）
+    context.subscriptions.push(
+        vscode.commands.registerCommand('git-assistant.switchRemote', async () => {
+            try {
+                const isRepo = await gitService.isRepository();
+                if (!isRepo) {
+                    vscode.window.showWarningMessage('当前文件夹不是Git仓库，无法配置远程。');
+                    return;
+                }
+
+                const remotes = await gitService.getRemotes();
+                if (remotes.length === 0) {
+                    vscode.window.showWarningMessage('当前仓库没有配置远程仓库，请先创建远程。');
+                    return;
+                }
+
+                const currentConfig = vscode.workspace.getConfiguration('git-assistant');
+                const currentDefault = (currentConfig.get<string>('defaultRemote') || '').trim();
+
+                const picked = await vscode.window.showQuickPick(
+                    remotes.map(remote => ({
+                        label: `$(cloud) ${remote.name}`,
+                        description: remote.refs?.fetch || remote.refs?.push || '',
+                        detail: remote.name === currentDefault ? '当前默认远程' : undefined,
+                        remote: remote.name
+                    })),
+                    {
+                        placeHolder: currentDefault
+                            ? `选择新的默认远程（当前：${currentDefault}）`
+                            : '选择要作为默认的远程仓库'
+                    }
+                );
+
+                if (!picked) {
+                    return;
+                }
+
+                await currentConfig.update('defaultRemote', picked.remote, vscode.ConfigurationTarget.Workspace);
+                vscode.window.showInformationMessage(`✅ 默认远程已设置为 "${picked.remote}"，快捷推送 / 拉取将优先使用该远程。`);
+            } catch (error) {
+                vscode.window.showErrorMessage(`切换默认远程失败: ${error}`);
+            }
+        })
+    );
+
+    // 编辑远程仓库
+    context.subscriptions.push(
+        vscode.commands.registerCommand('git-assistant.editRemote', async () => {
+            try {
+                const isRepo = await gitService.isRepository();
+                if (!isRepo) {
+                    vscode.window.showWarningMessage('当前文件夹不是Git仓库，无法编辑远程仓库。');
+                    return;
+                }
+
+                const remotes = await gitService.getRemotes();
+                if (remotes.length === 0) {
+                    vscode.window.showWarningMessage('当前仓库没有配置远程仓库。');
+                    return;
+                }
+
+                const selected = await vscode.window.showQuickPick(
+                    remotes.map(remote => ({
+                        label: `$(cloud) ${remote.name}`,
+                        description: remote.refs?.fetch || remote.refs?.push || '',
+                        remote: remote.name
+                    })),
+                    {
+                        placeHolder: '选择要编辑的远程仓库'
+                    }
+                );
+
+                if (!selected) {
+                    return;
+                }
+
+                let remoteName = selected.remote;
+
+                const newName = await vscode.window.showInputBox({
+                    prompt: '输入新的远程仓库名称',
+                    value: remoteName,
+                    validateInput: (value: string) => {
+                        if (!value) {
+                            return '远程仓库名称不能为空';
+                        }
+                        if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
+                            return '名称只能包含字母、数字、下划线和横线';
+                        }
+                        return null;
+                    }
+                });
+
+                if (!newName) {
+                    return;
+                }
+
+                const currentUrl = selected.description || '';
+                const newUrl = await vscode.window.showInputBox({
+                    prompt: '输入新的远程仓库地址',
+                    placeHolder: 'https://github.com/username/repo.git',
+                    value: currentUrl,
+                    validateInput: (value: string) => {
+                        if (!value) {
+                            return '远程仓库地址不能为空';
+                        }
+                        if (!value.includes('http') && !value.includes('git@')) {
+                            return '请输入有效的Git仓库地址';
+                        }
+                        return null;
+                    }
+                });
+
+                if (!newUrl) {
+                    return;
+                }
+
+                let updated = false;
+                if (newName !== remoteName) {
+                    await gitService.renameRemote(remoteName, newName);
+                    remoteName = newName;
+                    updated = true;
+                }
+
+                if (newUrl !== currentUrl) {
+                    await gitService.updateRemoteUrl(remoteName, newUrl);
+                    updated = true;
+                }
+
+                if (updated) {
+                    vscode.window.showInformationMessage(`✅ 远程仓库 "${remoteName}" 已更新`);
+                } else {
+                    vscode.window.showInformationMessage('未检测到更改，远程仓库保持不变');
+                }
+
+                branchProvider.refresh();
+                historyProvider.refresh();
+                DashboardPanel.refresh();
+            } catch (error) {
+                vscode.window.showErrorMessage(`编辑远程仓库失败: ${error}`);
+            }
+        })
+    );
+
+    // 删除远程仓库
+    context.subscriptions.push(
+        vscode.commands.registerCommand('git-assistant.deleteRemote', async () => {
+            try {
+                const isRepo = await gitService.isRepository();
+                if (!isRepo) {
+                    vscode.window.showWarningMessage('当前文件夹不是Git仓库，无法删除远程仓库。');
+                    return;
+                }
+
+                const remotes = await gitService.getRemotes();
+                if (remotes.length === 0) {
+                    vscode.window.showWarningMessage('当前仓库没有配置远程仓库。');
+                    return;
+                }
+
+                const selected = await vscode.window.showQuickPick(
+                    remotes.map(remote => ({
+                        label: `$(cloud) ${remote.name}`,
+                        description: remote.refs?.fetch || remote.refs?.push || '',
+                        remote: remote.name
+                    })),
+                    {
+                        placeHolder: '选择要删除的远程仓库'
+                    }
+                );
+
+                if (!selected) {
+                    return;
+                }
+
+                const confirm = await vscode.window.showWarningMessage(
+                    `确定要删除远程仓库 "${selected.remote}" 吗？此操作会移除所有与其相关的推送/拉取配置。`,
+                    { modal: true },
+                    '删除',
+                    '取消'
+                );
+
+                if (confirm !== '删除') {
+                    return;
+                }
+
+                await gitService.removeRemote(selected.remote);
+                vscode.window.showInformationMessage(`✅ 远程仓库 "${selected.remote}" 已删除`);
+
+                // 如果删除的是当前默认远程，则清空配置
+                const config = vscode.workspace.getConfiguration('git-assistant');
+                const currentDefault = (config.get<string>('defaultRemote') || '').trim();
+                if (currentDefault === selected.remote) {
+                    await config.update('defaultRemote', '', vscode.ConfigurationTarget.Workspace);
+                }
+
+                branchProvider.refresh();
+                historyProvider.refresh();
+                DashboardPanel.refresh();
+            } catch (error) {
+                vscode.window.showErrorMessage(`删除远程仓库失败: ${error}`);
+            }
+        })
+    );
+
     // 初始提交 - 已取消，仅保留 git init 功能
     /*
     context.subscriptions.push(

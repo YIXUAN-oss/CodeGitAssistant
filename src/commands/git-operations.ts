@@ -23,6 +23,7 @@ export function registerGitOperations(
             try {
                 const config = vscode.workspace.getConfiguration('git-assistant');
                 const needConfirm = config.get('confirmPush', true);
+                const preferredRemote = (config.get<string>('defaultRemote') || '').trim();
 
                 // 检查是否有远程仓库
                 const remotes = await gitService.getRemotes();
@@ -31,8 +32,13 @@ export function registerGitOperations(
                     return;
                 }
 
-                // 如果有多个远程仓库，让用户选择
-                if (remotes.length > 1) {
+                if (remotes.length === 1) {
+                    selectedRemote = remotes[0].name;
+                } else if (preferredRemote && remotes.some(r => r.name === preferredRemote)) {
+                    // 如果配置了默认远程且存在，则直接使用
+                    selectedRemote = preferredRemote;
+                } else {
+                    // 如果有多个远程仓库，让用户选择
                     const remoteItems = remotes.map(remote => ({
                         label: `$(cloud) ${remote.name}`,
                         description: remote.refs?.fetch || remote.refs?.push || '',
@@ -40,7 +46,9 @@ export function registerGitOperations(
                     }));
 
                     const selected = await vscode.window.showQuickPick(remoteItems, {
-                        placeHolder: '选择要推送到的远程仓库'
+                        placeHolder: preferredRemote
+                            ? `选择要推送到的远程仓库（当前默认：${preferredRemote}）`
+                            : '选择要推送到的远程仓库'
                     });
 
                     if (!selected) {
@@ -48,8 +56,6 @@ export function registerGitOperations(
                     }
 
                     selectedRemote = selected.remote;
-                } else {
-                    selectedRemote = remotes[0].name;
                 }
 
                 // 获取当前状态
@@ -187,6 +193,9 @@ export function registerGitOperations(
             let hasStashed = false;
             let selectedRemote = 'origin';
             try {
+                const config = vscode.workspace.getConfiguration('git-assistant');
+                const preferredRemote = (config.get<string>('defaultRemote') || '').trim();
+
                 // 检查是否有远程仓库
                 const remotes = await gitService.getRemotes();
                 if (remotes.length === 0) {
@@ -194,8 +203,13 @@ export function registerGitOperations(
                     return;
                 }
 
-                // 如果有多个远程仓库，让用户选择
-                if (remotes.length > 1) {
+                if (remotes.length === 1) {
+                    selectedRemote = remotes[0].name;
+                } else if (preferredRemote && remotes.some(r => r.name === preferredRemote)) {
+                    // 使用配置的默认远程
+                    selectedRemote = preferredRemote;
+                } else {
+                    // 如果有多个远程仓库，让用户选择
                     const remoteItems = remotes.map(remote => ({
                         label: `$(cloud) ${remote.name}`,
                         description: remote.refs?.fetch || remote.refs?.push || '',
@@ -203,7 +217,9 @@ export function registerGitOperations(
                     }));
 
                     const selected = await vscode.window.showQuickPick(remoteItems, {
-                        placeHolder: '选择要从哪个远程仓库拉取'
+                        placeHolder: preferredRemote
+                            ? `选择要从哪个远程仓库拉取（当前默认：${preferredRemote}）`
+                            : '选择要从哪个远程仓库拉取'
                     });
 
                     if (!selected) {
@@ -211,8 +227,6 @@ export function registerGitOperations(
                     }
 
                     selectedRemote = selected.remote;
-                } else {
-                    selectedRemote = remotes[0].name;
                 }
 
                 // 获取仓库状态

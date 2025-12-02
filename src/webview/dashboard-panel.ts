@@ -10,6 +10,7 @@ interface WebviewMessage {
     command: string;
     commandId?: string;
     branch?: string;
+    isCurrent?: boolean;
     tagName?: string;
     remoteName?: string;
     remote?: string;
@@ -158,6 +159,25 @@ export class DashboardPanel {
                         case 'mergeBranch':
                             if (message.branch) {
                                 await this._handleMergeBranch(message.branch);
+                            }
+                            break;
+                        case 'branchActions':
+                            if (message.branch) {
+                                await this._showBranchActionsMenu(message.branch, message.isCurrent);
+                            }
+                            break;
+                        case 'renameBranch':
+                            if (message.branch) {
+                                await vscode.commands.executeCommand('git-assistant.renameBranch', message.branch);
+                            } else {
+                                await this._executeCommand('git-assistant.renameBranch');
+                            }
+                            break;
+                        case 'deleteBranch':
+                            if (message.branch) {
+                                await vscode.commands.executeCommand('git-assistant.deleteBranch', message.branch);
+                            } else {
+                                await this._executeCommand('git-assistant.deleteBranch');
                             }
                             break;
                         case 'createTag':
@@ -505,6 +525,97 @@ export class DashboardPanel {
                 vscode.window.showErrorMessage(`合并失败: ${errorMessage}`);
             }
             await this._sendGitData();
+        }
+    }
+
+    /**
+     * 在 VS Code 端弹出“分支更多操作”菜单
+     * 这样用户点击侧边栏中的图标时，会看到类似 VS Code Git 菜单的原生弹窗体验
+     */
+    private async _showBranchActionsMenu(branchName: string, isCurrentFromWebview?: boolean) {
+        try {
+            if (!branchName) {
+                vscode.window.showErrorMessage('分支名称不能为空');
+                return;
+            }
+
+            const branches = await this.gitService.getBranches();
+            const currentBranch = branches.current;
+            const isCurrent = typeof isCurrentFromWebview === 'boolean'
+                ? isCurrentFromWebview
+                : currentBranch === branchName;
+
+            type BranchAction =
+                | 'switch'
+                | 'merge'
+                | 'rename'
+                | 'delete';
+
+            const items: (vscode.QuickPickItem & { action: BranchAction })[] = [];
+
+            if (!isCurrent) {
+                items.push(
+                    {
+                        label: '切换到此分支',
+                        description: `checkout ${branchName}`,
+                        detail: '会自动处理未提交更改（可选择暂存或放弃）',
+                        action: 'switch'
+                    },
+                    {
+                        label: '将此分支合并到当前分支',
+                        description: currentBranch ? `${branchName} → ${currentBranch}` : undefined,
+                        detail: '提供快进 / 三路合并策略选择，并进行安全检查',
+                        action: 'merge'
+                    }
+                );
+            }
+
+            items.push({
+                label: isCurrent ? '重命名当前分支' : '重命名此分支',
+                description: branchName,
+                action: 'rename'
+            });
+
+            if (!isCurrent) {
+                items.push({
+                    label: '删除此本地分支',
+                    description: branchName,
+                    detail: '会检查是否已合并并给出安全提示，可选择强制删除',
+                    action: 'delete'
+                });
+            }
+
+            if (items.length === 0) {
+                vscode.window.showInformationMessage('当前分支暂无可用操作');
+                return;
+            }
+
+            const picked = await vscode.window.showQuickPick(items, {
+                placeHolder: `选择对分支 "${branchName}" 执行的操作`,
+                ignoreFocusOut: false
+            });
+
+            if (!picked) {
+                return;
+            }
+
+            switch (picked.action) {
+                case 'switch':
+                    await this._handleSwitchBranch(branchName);
+                    break;
+                case 'merge':
+                    await this._handleMergeBranch(branchName);
+                    break;
+                case 'rename':
+                    await vscode.commands.executeCommand('git-assistant.renameBranch', branchName);
+                    break;
+                case 'delete':
+                    await vscode.commands.executeCommand('git-assistant.deleteBranch', branchName);
+                    break;
+            }
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(`处理分支操作菜单时出错: ${errorMessage}`);
         }
     }
 

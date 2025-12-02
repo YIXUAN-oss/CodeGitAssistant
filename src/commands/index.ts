@@ -45,6 +45,18 @@ export function registerCommands(
         branchAction: 'create' | 'switch' | 'merge' | 'rename' | 'delete';
     };
 
+    type ChangeQuickPickItem = vscode.QuickPickItem & {
+        changeAction: 'add' | 'unstage' | 'discard' | 'commitAll' | 'undoCommit';
+    };
+
+    type TagQuickPickItem = vscode.QuickPickItem & {
+        tagAction: 'create' | 'list' | 'delete' | 'push';
+    };
+
+    type RemoteQuickPickItem = vscode.QuickPickItem & {
+        remoteAction: 'switch' | 'add' | 'edit' | 'delete';
+    };
+
     // 分支视图快捷操作入口（QuickPick 菜单）
     context.subscriptions.push(
         vscode.commands.registerCommand('git-assistant.branchQuickActions', async () => {
@@ -54,7 +66,10 @@ export function registerCommands(
                 { label: '$(cloud-upload) 推送', description: '将本地提交推送到远程仓库', action: 'push' },
                 { label: '$(repo-clone) 克隆', description: '从远程地址克隆新的仓库', action: 'clone' },
                 { label: '$(add) 提交', description: '打开提交相关操作子菜单', action: 'commitMenu' },
+                { label: '$(edit) 更改', description: '暂存 / 取消暂存 / 放弃更改等操作', action: 'changeMenu' },
                 { label: '$(git-branch) 分支', description: '分支相关操作', action: 'branchMenu' },
+                { label: '$(tag) 标签', description: '创建 / 查看 / 删除 / 推送标签', action: 'tagMenu' },
+                { label: '$(cloud) 远程', description: '配置远程仓库或通过面板管理远程', action: 'remoteMenu' },
                 { label: '$(dashboard) 打开控制面板', description: '使用可视化仪表盘执行更多操作', action: 'dashboard' }
             ];
 
@@ -107,6 +122,65 @@ export function registerCommands(
                     }
                     break;
                 }
+                case 'changeMenu': {
+                    // 二级菜单：更改相关操作（暂存/取消暂存/放弃更改等）
+                    const changeItems: ChangeQuickPickItem[] = [
+                        {
+                            label: '添加文件到暂存区',
+                            description: 'git add / 选择文件添加到暂存区',
+                            changeAction: 'add'
+                        },
+                        {
+                            label: '取消暂存',
+                            description: 'git reset HEAD（全部或选择文件）',
+                            changeAction: 'unstage'
+                        },
+                        {
+                            label: '放弃更改',
+                            description: 'git checkout -- （全部或选择文件）',
+                            changeAction: 'discard'
+                        },
+                        {
+                            label: '提交所有已跟踪更改',
+                            description: 'git commit -am "<message>"',
+                            changeAction: 'commitAll'
+                        },
+                        {
+                            label: '撤销上次提交（保留更改）',
+                            description: 'git reset --soft HEAD~1',
+                            changeAction: 'undoCommit'
+                        }
+                    ];
+
+                    const pickedChange = await vscode.window.showQuickPick<ChangeQuickPickItem>(changeItems, {
+                        placeHolder: '选择更改相关操作'
+                    });
+
+                    if (!pickedChange) {
+                        return;
+                    }
+
+                    switch (pickedChange.changeAction) {
+                        case 'add':
+                            await vscode.commands.executeCommand('git-assistant.addFiles');
+                            break;
+                        case 'unstage':
+                            await vscode.commands.executeCommand('git-assistant.unstageFiles');
+                            break;
+                        case 'discard':
+                            await vscode.commands.executeCommand('git-assistant.discardChanges');
+                            break;
+                        case 'commitAll':
+                            await vscode.commands.executeCommand('git-assistant.commitAllChanges');
+                            break;
+                        case 'undoCommit':
+                            await vscode.commands.executeCommand('git-assistant.undoLastCommit');
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+                }
                 case 'branchMenu': {
                     // 二级菜单：分支相关操作
                     const branchItems: BranchQuickPickItem[] = [
@@ -140,6 +214,108 @@ export function registerCommands(
                             break;
                         case 'delete':
                             await vscode.commands.executeCommand('git-assistant.deleteBranch');
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+                }
+                case 'tagMenu': {
+                    // 二级菜单：标签相关操作
+                    const tagItems: TagQuickPickItem[] = [
+                        {
+                            label: '创建标签',
+                            description: '在当前提交或指定提交上创建新标签',
+                            tagAction: 'create'
+                        },
+                        {
+                            label: '查看标签列表',
+                            description: '以列表形式浏览所有标签',
+                            tagAction: 'list'
+                        },
+                        {
+                            label: '删除标签',
+                            description: '删除本地标签，可选同时删除远程标签',
+                            tagAction: 'delete'
+                        },
+                        {
+                            label: '推送标签到远程',
+                            description: '推送单个或全部标签到远程仓库',
+                            tagAction: 'push'
+                        }
+                    ];
+
+                    const pickedTag = await vscode.window.showQuickPick<TagQuickPickItem>(tagItems, {
+                        placeHolder: '选择标签操作'
+                    });
+
+                    if (!pickedTag) {
+                        return;
+                    }
+
+                    switch (pickedTag.tagAction) {
+                        case 'create':
+                            await vscode.commands.executeCommand('git-assistant.createTag');
+                            break;
+                        case 'list':
+                            await vscode.commands.executeCommand('git-assistant.listTags');
+                            break;
+                        case 'delete':
+                            await vscode.commands.executeCommand('git-assistant.deleteTag');
+                            break;
+                        case 'push':
+                            await vscode.commands.executeCommand('git-assistant.pushTag');
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+                }
+                case 'remoteMenu': {
+                    // 二级菜单：远程仓库相关操作（切换 / 创建 / 编辑 / 删除）
+                    const remoteItems: RemoteQuickPickItem[] = [
+                        {
+                            label: '切换默认远程',
+                            description: '为快速推送 / 拉取选择默认远程仓库',
+                            remoteAction: 'switch'
+                        },
+                        {
+                            label: '创建远程仓库配置',
+                            description: '添加新的远程（或更新现有远程地址）',
+                            remoteAction: 'add'
+                        },
+                        {
+                            label: '编辑远程仓库',
+                            description: '修改远程名称或地址',
+                            remoteAction: 'edit'
+                        },
+                        {
+                            label: '删除远程仓库',
+                            description: '从当前仓库中移除远程配置',
+                            remoteAction: 'delete'
+                        }
+                    ];
+
+                    const pickedRemote = await vscode.window.showQuickPick<RemoteQuickPickItem>(remoteItems, {
+                        placeHolder: '选择远程仓库操作'
+                    });
+
+                    if (!pickedRemote) {
+                        return;
+                    }
+
+                    switch (pickedRemote.remoteAction) {
+                        case 'switch':
+                            await vscode.commands.executeCommand('git-assistant.switchRemote');
+                            break;
+                        case 'add':
+                            await vscode.commands.executeCommand('git-assistant.addRemote');
+                            break;
+                        case 'edit':
+                            await vscode.commands.executeCommand('git-assistant.editRemote');
+                            break;
+                        case 'delete':
+                            await vscode.commands.executeCommand('git-assistant.deleteRemote');
                             break;
                         default:
                             break;
