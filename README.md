@@ -6,7 +6,7 @@
 
 **强大的Git可视化管理工具，让Git操作更简单、更高效！**
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/yourusername/git-assistant)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/YIXUAN-oss/CodeGitAssistant/releases/tag/v1.0.0)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![VS Code](https://img.shields.io/badge/VS%20Code-1.80%2B-007ACC.svg)](https://code.visualstudio.com/)
 
@@ -81,17 +81,19 @@
 
 ## 📦 安装
 
-### 从VS Code市场安装
+### 从 VS Code 市场安装
 1. 打开VS Code
 2. 按 `Ctrl+Shift+X` 打开扩展面板
-3. 搜索 "Git Assistant"
+3. 搜索 "Git Assistant - 增强版Git工具"
 4. 点击"安装"
+
+> 如果你已经下载了 `git-assistant-1.0.0.vsix`（例如从 GitHub Releases 或本仓库根目录），也可以在扩展视图右上角选择 **"从 VSIX 安装..."**，直接选择该文件完成安装。
 
 ### 从源码安装
 ```bash
 # 克隆仓库
 git clone https://github.com/YIXUAN-oss/CodeGitAssistant
-cd git-assistant
+cd CodeGitAssistant
 
 # 安装依赖
 npm install
