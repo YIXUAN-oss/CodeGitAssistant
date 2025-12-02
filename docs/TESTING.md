@@ -251,8 +251,8 @@ code .
 
 
     - 默认展开分类：确认"开始使用"和"工具"分类默认展开，其他分类可折叠
-    - 点击分类标题验证折叠/展开功能正常
-    - **痛点解决**：按功能分类，快速找到需要的命令
+        - 点击分类标题验证折叠/展开功能正常
+        - **痛点解决**：按功能分类，快速找到需要的命令
 
 3. **命令搜索与过滤（如果有）**
    - 如果提供搜索框，验证：
@@ -707,6 +707,12 @@ code .
 - 节点颜色区分：蓝色（普通提交）、绿色（多分支共享提交）、橙色（合并提交）
 - 布局特点：新提交在上方，旧提交在下方，使用轨道（列）分配算法展示分支分叉
 
+主要测试和一下命令生出的结构是否一致：
+
+```
+git log --oneline --graph --all --decorate
+```
+
 #### 痛点场景 1：DAG 结构可视化与理解
 
 **问题**：Git 的分支和提交关系是复杂的 DAG 结构，命令行 `git log --graph` 输出难以理解，无法直观看到分支的分叉和合并关系。
@@ -714,33 +720,106 @@ code .
 1. **准备测试数据**
 
 ```powershell
-cd E:\TestRepo
+# ======================================================================
+# 模拟真实项目中的多分支并行开发与合并
+# 目标：
+#   - feature/api    → 已合并（含两次提交）
+#   - feature/ui     → 已合并（含两次提交，跨文件）
+#   - feature/auth   → 已合并
+# 所有合并均使用 --no-ff 强制生成合并提交，便于可视化依赖关系
+# ======================================================================
+
+# 进入测试仓库目录
+Set-Location E:\TestRepo
+
+# 初始化空 Git 仓库
+git init
+
+# 创建 README.md 文件（使用 UTF-8 编码，避免中文乱码）
+echo "# TestRepo" | Out-File -Encoding UTF8 README.md
+
+# 添加并提交 README
+git add README.md
+git commit -m "chore: initial commit with README"
+
+
+# 确保我们在 main 分支（避免从其他分支开始）
 git checkout main
 
-# 创建多个分支和提交，模拟真实项目结构
-git checkout -b feature/api
+# ------------------------------------------------------------------
+# 第 1 步：开发 API 功能（两次迭代）
+# ------------------------------------------------------------------
+git checkout -b feature/api           # 从 main 创建 API 分支
+
+# 确保 src 目录存在（PowerShell 不会自动创建父目录）
+mkdir -Force src
+
+# 第一次提交：API v1
 echo "API v1" > src/api.ts
-git commit -am "feat: Add API v1"
+git add src/api.ts                    # ✅ 显式添加新文件（关键！）
+git commit -m "feat: Add API v1"
+
+# 第二次提交：更新到 v2（修改已跟踪文件，-a 可用）
 echo "API v2" > src/api.ts
 git commit -am "feat: Update API to v2"
 
-git checkout main
-git checkout -b feature/ui
+
+# ------------------------------------------------------------------
+# 第 2  步：开发 UI 功能（两个不同文件）
+# ------------------------------------------------------------------
+git checkout main                     # 切回 main（确保独立起点）
+git checkout -b feature/ui            # 从干净的 main 创建 UI 分支
+
+mkdir -Force src                      # 确保目录存在
+
+# 提交 1：UI 组件
 echo "UI component" > src/ui.tsx
-git commit -am "feat: Add UI component"
+git add src/ui.tsx                    # ✅ 新文件必须显式 add
+git commit -m "feat: Add UI component"
+
+# 提交 2：样式文件
 echo "UI styles" > src/styles.css
-git commit -am "feat: Add UI styles"
+git add src/styles.css                # ✅ 新文件必须显式 add
+git commit -m "feat: Add UI styles"
 
+
+# ------------------------------------------------------------------
+# 第 3 步：将 API 和 UI 合并到 main（强制非快进）
+# ------------------------------------------------------------------
 git checkout main
-git merge --no-ff feature/api -m "Merge feature/api into main"
-git merge --no-ff feature/ui -m "Merge feature/ui into main"
 
-# 创建更多分支以测试复杂关系
-git checkout -b feature/auth
+# 合并 API（--no-ff 确保生成合并提交节点）
+git merge --no-ff feature/api -m "Merge branch 'feature/api' into main"
+
+# 合并 UI（同样 --no-ff）
+git merge --no-ff feature/ui -m "Merge branch 'feature/ui' into main"
+
+
+# ------------------------------------------------------------------
+# 第 4 步：开发 Auth 功能并合并
+# ------------------------------------------------------------------
+git checkout -b feature/auth          # 从当前 main（已含 api/ui）创建 auth 分支
+
 echo "Auth service" > src/auth.ts
-git commit -am "feat: Add auth service"
+git add src/auth.ts                   # ✅ 新文件显式 add
+git commit -m "feat: Add auth service"
+
+# 切回 main 并合并
 git checkout main
-git merge --no-ff feature/auth -m "Merge feature/auth"
+git merge --no-ff feature/auth -m "Merge branch 'feature/auth' into main"
+
+
+# ======================================================================
+# ✅ 验证最终状态（可选运行）
+# ======================================================================
+Write-Host "`n✅ main 分支包含的文件：" -ForegroundColor Green
+Get-ChildItem -Recurse -File | ForEach-Object { $_.FullName }
+
+Write-Host "`n✅ 提交图谱（应显示多个合并节点）：" -ForegroundColor Cyan
+git log --graph --oneline --decorate --all
+
+Write-Host "`n✅ 所有本地分支：" -ForegroundColor Yellow
+git branch
 ```
 
 2. **验证分支视图加载**
@@ -880,6 +959,7 @@ git merge --no-ff feature/auth -m "Merge feature/auth"
 **问题**：分支视图数据需要与实际 Git 仓库状态一致，执行 Git 操作后需要及时更新。
 
 1. **验证数据来源**
+
    - 执行 `git log --all --oneline --graph`
    - 对比分支视图显示的节点和关系
    - 验证：
@@ -891,12 +971,17 @@ git merge --no-ff feature/auth -m "Merge feature/auth"
    - **痛点解决**：数据可信赖，与实际仓库一致
 
 2. **验证实时更新**
+
    - 在外部终端创建新提交：
+
    ```powershell
    git checkout -b feature/new
+   mkdir -Force src                     # 确保 src 目录存在（尤其在 PowerShell 中）
    echo "New feature" > src/new.ts
-   git commit -am "feat: Add new feature"
+   git add src/new.ts                   # ✅ 关键：显式添加新文件
+   git commit -m "feat: Add new feature"
    ```
+
    - 在控制面板点击刷新按钮（🔄，位于顶部）
    - 验证：
      * 分支视图重新加载（显示"正在加载分支视图数据..."）
@@ -906,11 +991,14 @@ git merge --no-ff feature/auth -m "Merge feature/auth"
    - **痛点解决**：数据始终同步，反映最新状态
 
 3. **验证合并提交识别**
+
    - 执行合并操作（使用 `--no-ff` 创建三路合并）：
+
    ```powershell
    git checkout main
-   git merge --no-ff feature/new -m "Merge feature/new"
+   git merge --no-ff feature/new -m "Merge branch 'feature/new' into main"
    ```
+
    - 刷新分支视图
    - 验证：
      * 合并提交显示为橙色大节点（半径 8px）
@@ -920,14 +1008,30 @@ git merge --no-ff feature/auth -m "Merge feature/auth"
    - **痛点解决**：清晰识别合并操作，理解分支合并历史
 
 4. **验证多分支共享提交**
+
    - 创建分支并合并：
+
    ```powershell
+   # 1. 创建功能分支
    git checkout -b feature/shared
+   
+   # 2. 确保 src 目录存在（尤其在 Windows/PowerShell）
+   mkdir -Force src
+   
+   # 3. 创建新文件
    echo "Shared code" > src/shared.ts
-   git commit -am "feat: Add shared code"
+   
+   # 4. ⚠️ 必须显式添加新文件（-am 无法处理 untracked 文件！）
+   git add src/shared.ts
+   
+   # 5. 提交更改
+   git commit -m "feat: Add shared code"
+   
+   # 6. 切回 main 并合并（--no-ff 强制生成合并提交节点）
    git checkout main
-   git merge --no-ff feature/shared
+   git merge --no-ff feature/shared -m "Merge branch 'feature/shared' into main"
    ```
+
    - 验证共享提交显示为绿色节点（半径 6px）
    - 验证该提交在多个分支的提交链中都存在
    - **痛点解决**：识别公共提交，理解分支共同祖先
@@ -1148,17 +1252,32 @@ git merge --no-ff feature/auth -m "Merge feature/auth"
 1. **触发冲突并验证实时检测**
 
 ```powershell
-# 准备冲突场景
-git checkout main
+# 初始化仓库（如果尚未初始化）
+git init
+
+# 确保 main 是默认分支（Git 2.28+）
+git checkout -b main
+
+# 创建初始提交（必须有，否则后续 commit -am 会失败）
+echo "# My Project" > README.md
+git add README.md
+git commit -m "Initial commit"
+
+# 创建 feature 分支并添加 Alice
 git checkout -b feature/user-profile
-echo "function getUser() { return 'Alice'; }" > src/user.ts
-git commit -am "Add user profile feature"
+New-Item -ItemType Directory -Path src -Force
+Set-Content -Path src/user.ts -Value "function getUser() { return 'Alice'; }"
+git add src/user.ts
+git commit -m "Add user profile feature"
 
+# 切回 main，创建 src 目录并添加 Bob
 git checkout main
-echo "function getUser() { return 'Bob'; }" > src/user.ts
-git commit -am "Update user function"
+New-Item -ItemType Directory -Path src -Force
+Set-Content -Path src/user.ts -Value "function getUser() { return 'Bob'; }"
+git add src/user.ts
+git commit -m "Update user function"
 
-# 执行合并，触发冲突
+# 合并触发冲突
 git checkout feature/user-profile
 git merge main
 ```
@@ -1182,7 +1301,7 @@ git merge main
    - 验证是否弹出通知提示："发现 X 个冲突文件，需要解决"
    - 点击通知应跳转到冲突解决界面
 
-+ 
+
 
 #### 痛点场景 2：理解冲突标记和代码对比
 
@@ -1191,25 +1310,58 @@ git merge main
 1. **创建清晰的冲突示例**
 
 ```powershell
+# 初始化仓库（如果尚未初始化）
+git init
+
+# 确保 main 是默认分支（Git 2.28+）
+git checkout -b main
+
+# 创建初始提交（必须有，否则后续 commit -am 会失败）
+echo "# My Project" > README.md
+git add README.md
+git commit -m "Initial commit"
+
+# 确保你在干净的仓库中（已有初始提交，例如 README.md）
+# 如果还没有 src 目录，在 main 分支也要创建！
+
+# 切换到 main 并确保有基础结构
 git checkout main
+
+# 创建 src 目录（如果还没有）
+New-Item -ItemType Directory -Path src -Force
+
+# 创建 feature 分支
 git checkout -b feature/api-refactor
-# 在当前分支修改
-echo @"
+
+# 在 feature 分支写入 config.ts
+@"
 // API Configuration
 const API_URL = 'https://api.example.com';
 const TIMEOUT = 5000;
 "@ | Out-File -Encoding utf8 src/config.ts
-git commit -am "Refactor API config"
 
+# 显式添加并提交（不能只用 -am，因为是新文件！）
+git add src/config.ts
+git commit -m "Refactor API config"
+
+# 切回 main 分支
 git checkout main
-# 在主分支有不同修改
-echo @"
+
+# 再次确保 src 目录存在（虽然上面已创建，但保险起见）
+New-Item -ItemType Directory -Path src -Force
+
+# 在 main 分支写入不同内容的 config.ts
+@"
 // API Settings
 const API_URL = 'https://api.production.com';
 const TIMEOUT = 3000;
 "@ | Out-File -Encoding utf8 src/config.ts
-git commit -am "Update API settings"
 
+# 显式添加并提交
+git add src/config.ts
+git commit -m "Update API settings"
+
+# 回到 feature 分支并合并 main（触发冲突）
 git checkout feature/api-refactor
 git merge main
 ```
@@ -1248,13 +1400,13 @@ git merge main
 ```
 
     - 选择一个冲突文件（如 `src/config.ts`）
-    - 点击"接受传入更改"按钮
-    - 验证：
+        - 点击"接受传入更改"按钮
+        - 验证：
         * 冲突标记自动删除
         * 文件内容变为传入版本
         * 文件自动保存
         * 控制面板中该文件从冲突列表移除或标记为"已解决"
-    - **痛点解决**：无需手动编辑，降低出错概率
+        - **痛点解决**：无需手动编辑，降低出错概率
 
 3. **验证按钮描述清晰**
    - 验证每个按钮有清晰的图标和文字说明
@@ -1268,21 +1420,40 @@ git merge main
 1. **创建多文件冲突场景**
 
 ```powershell
-git checkout main
+# 1. 初始化仓库（如果尚未初始化）
+git init
+
+# 2. 创建并切换到 main 分支（关键！）
+git checkout -b main
+
+# 3. 创建初始提交（必须有！）
+Set-Content -Path README.md -Value "# Test Repository"
+git add README.md
+git commit -m "Initial commit"
+
+# 4. 现在创建 feature 分支
 git checkout -b feature/multi-file-conflict
 
-# 修改多个文件
-echo "version A" > src/file1.ts
-echo "version A" > src/file2.ts
-echo "version A" > src/file3.ts
-git commit -am "Multiple file changes"
+# 5. 创建 src 目录和文件（版本 A）
+New-Item -ItemType Directory -Path src -Force | Out-Null
+Set-Content -Path src/file1.ts -Value "version A"
+Set-Content -Path src/file2.ts -Value "version A"
+Set-Content -Path src/file3.ts -Value "version A"
+git add src/
+git commit -m "Multiple file changes (version A)"
 
+# 6. 切回 main 分支
 git checkout main
-echo "version B" > src/file1.ts
-echo "version B" > src/file2.ts
-echo "version B" > src/file3.ts
-git commit -am "Different changes"
 
+# 7. 在 main 上也创建同名文件，但内容不同（版本 B）
+New-Item -ItemType Directory -Path src -Force | Out-Null
+Set-Content -Path src/file1.ts -Value "version B"
+Set-Content -Path src/file2.ts -Value "version B"
+Set-Content -Path src/file3.ts -Value "version B"
+git add src/
+git commit -m "Different changes (version B)"
+
+# 8. 回到 feature 分支并合并 main → 触发多文件冲突
 git checkout feature/multi-file-conflict
 git merge main
 ```
@@ -1329,7 +1500,7 @@ git merge main
         * 提供"完成合并"或"提交合并"按钮/命令
         * 执行后自动创建合并提交
         * 提交信息包含合并信息（如 "Merge branch 'feature/xxx' into main"）
-    - **痛点解决**：明确的流程指引，不会卡在合并中间状态
+        - **痛点解决**：明确的流程指引，不会卡在合并中间状态
 
 3. **验证放弃合并功能**
    - 如果冲突太复杂，想放弃合并，验证：
@@ -1346,38 +1517,77 @@ git merge main
 1. **创建多段冲突场景**
 
 ```powershell
-git checkout main
-git checkout -b feature/complex-conflict
+# 0. 确保在一个干净的新目录里（你已在 E:\TestRepo）
 
-# 文件中有多个函数，在不同位置都有冲突
-echo @"
+# 1. 初始化 Git 仓库（你已做）
+git init
+git checkout -b main
+
+# 2. 初始提交（你已做）
+Set-Content -Path README.md -Value "# Interactive Conflict Test"
+git add README.md
+git commit -m "Initial commit"
+
+# 3. 创建特性分支
+git checkout -b feature/interactive-conflicts
+
+# ✅ 关键修复：创建 src 目录！
+New-Item -ItemType Directory -Path src -Force | Out-Null
+
+# 4. 在 feature 分支写入版本 A
+@"
 function func1() {
-    return 'version A - func1';
+    return 'A - func1';
 }
+
+console.log('--- separator ---'); // 分隔行，两个分支保持完全一致
+
 function func2() {
-    return 'version A - func2';
+    return 'A - func2';
 }
+
+console.log('--- separator ---'); // 分隔行，两个分支保持完全一致
+
 function func3() {
-    return 'version A - func3';
+    return 'A - func3';
 }
 "@ | Out-File -Encoding utf8 src/utils.ts
-git commit -am "Multiple functions"
 
+# 添加并提交
+git add src/utils.ts
+git commit -m "Version A with separators"
+
+# 5. 回到 main 分支
 git checkout main
-echo @"
+
+# ✅ 再次确保 src 目录存在（虽然可能已有，但保险起见）
+New-Item -ItemType Directory -Path src -Force | Out-Null
+
+# 6. 在 main 分支写入版本 B（分隔行相同，函数体不同）
+@"
 function func1() {
-    return 'version B - func1';
+    return 'B - func1';
 }
+
+console.log('--- separator ---'); // 分隔行，两个分支保持完全一致
+
 function func2() {
-    return 'version B - func2';
+    return 'B - func2';
 }
+
+console.log('--- separator ---'); // 分隔行，两个分支保持完全一致
+
 function func3() {
-    return 'version B - func3';
+    return 'B - func3';
 }
 "@ | Out-File -Encoding utf8 src/utils.ts
-git commit -am "Different implementations"
 
-git checkout feature/complex-conflict
+# 添加并提交
+git add src/utils.ts
+git commit -m "Version B with separators"
+
+# 7. 回到 feature 分支并合并 main → 触发冲突
+git checkout feature/interactive-conflicts
 git merge main
 ```
 
@@ -1400,18 +1610,42 @@ git merge main
 1. **创建二进制文件冲突**
 
 ```powershell
+# === 1. 初始化仓库（如果尚未初始化）===
+if (-not (Test-Path .git)) {
+    git init
+    git checkout -b main
+    Set-Content -Path README.md -Value "# Test Repo"
+    git add README.md
+    git commit -m "Initial commit"
+}
+
+# === 2. 确保在 main 分支，并创建 src 目录 ===
 git checkout main
-git checkout -b feature/add-image
-# 创建一个图片文件（模拟）
-"binary content version A" | Out-File -Encoding binary src/logo.png
+New-Item -ItemType Directory -Path src -Force | Out-Null
+
+# === 3. 创建 feature 分支 ===
+git checkout - b feature/add-image
+
+# === 4. 在 feature 分支写入“二进制版本 A” ===
+# 使用不同的字节序列模拟不同图片
+$bytesA = [System.Text.Encoding]::UTF8.GetBytes("fake png version A")
+[System.IO.File]::WriteAllBytes("$PWD/src/logo.png", $bytesA)
+
 git add src/logo.png
 git commit -m "Add logo A"
 
+# === 5. 切回 main 分支 ===
 git checkout main
-"binary content version B" | Out-File -Encoding binary src/logo.png
+
+# === 6. 在 main 分支写入“二进制版本 B” ===
+New-Item -ItemType Directory -Path src -Force | Out-Null
+$bytesB = [System.Text.Encoding]::UTF8.GetBytes("fake png version B")  # 内容不同！
+[System.IO.File]::WriteAllBytes("$PWD/src/logo.png", $bytesB)
+
 git add src/logo.png
 git commit -m "Add logo B"
 
+# === 7. 回到 feature 分支并合并 main → 触发二进制冲突 ===
 git checkout feature/add-image
 git merge main
 ```
@@ -1509,8 +1743,8 @@ git merge --no-ff alice/feature -m "Merge alice/feature"
 ```
 
     - 验证冲突检测能正确识别团队协作场景
-    - 验证解决冲突后，可以继续协作流程
-    - **痛点解决**：支持团队协作的完整流程
+        - 验证解决冲突后，可以继续协作流程
+        - **痛点解决**：支持团队协作的完整流程
 
 #### 验证清单
 
@@ -1753,10 +1987,10 @@ git tag -a v1.0.0 -m "Updated release" HEAD~1
 ```
 
     - 在标签管理中推送 `v1.0.0`
-    - 验证提示远程已存在同名标签
-    - 选择"强制推送（覆盖）"
-    - 验证远程标签被更新
-    - **痛点解决**：支持修正错误的版本标签
+        - 验证提示远程已存在同名标签
+        - 选择"强制推送（覆盖）"
+        - 验证远程标签被更新
+        - **痛点解决**：支持修正错误的版本标签
 
 #### 痛点场景 3：删除标签
 
@@ -2353,8 +2587,8 @@ git push origin main
 ```
 
     - 本地创建提交但不推送
-    - 运行推送命令
-    - 验证：
+        - 运行推送命令
+        - 验证：
         * 提示本地分支落后于远程
         * 建议先拉取再推送
 

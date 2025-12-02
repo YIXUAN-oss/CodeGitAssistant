@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { GitService } from '../services/git-service';
 
 /**
@@ -7,9 +8,18 @@ import { GitService } from '../services/git-service';
 export class ConflictTreeItem extends vscode.TreeItem {
     constructor(
         public readonly filePath: string,
+        private readonly workspaceRoot: string | undefined,
         public readonly collapsibleState: vscode.TreeItemCollapsibleState
     ) {
         super(filePath, collapsibleState);
+
+        const fallbackRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const rootForResolution = this.workspaceRoot || fallbackRoot;
+        const absolutePath = path.isAbsolute(filePath)
+            ? filePath
+            : rootForResolution
+                ? path.join(rootForResolution, filePath)
+                : path.resolve(filePath);
 
         this.tooltip = `冲突文件: ${filePath}`;
         this.contextValue = 'conflictFile';
@@ -19,7 +29,7 @@ export class ConflictTreeItem extends vscode.TreeItem {
         this.command = {
             command: 'vscode.open',
             title: '打开文件',
-            arguments: [vscode.Uri.file(filePath)]
+            arguments: [vscode.Uri.file(absolutePath)]
         };
     }
 }
@@ -34,6 +44,7 @@ export class ConflictProvider implements vscode.TreeDataProvider<ConflictTreeIte
         this._onDidChangeTreeData.event;
 
     private conflictDecorationType: vscode.TextEditorDecorationType;
+    private fileConflictState: Map<string, boolean> = new Map();
 
     constructor(private gitService: GitService) {
         // 创建冲突装饰类型
@@ -49,6 +60,17 @@ export class ConflictProvider implements vscode.TreeDataProvider<ConflictTreeIte
         vscode.window.onDidChangeActiveTextEditor(editor => {
             if (editor) {
                 this.checkConflicts(editor.document);
+            }
+        });
+
+        // 监听文档保存与内容变化，实时更新冲突提示
+        vscode.workspace.onDidSaveTextDocument(document => {
+            this.checkConflicts(document);
+        });
+
+        vscode.workspace.onDidChangeTextDocument(event => {
+            if (event.document === vscode.window.activeTextEditor?.document) {
+                this.checkConflicts(event.document);
             }
         });
     }
@@ -77,8 +99,9 @@ export class ConflictProvider implements vscode.TreeDataProvider<ConflictTreeIte
                 return [item as any];
             }
 
+            const workspaceRoot = this.gitService.getWorkspaceRoot();
             return conflicts.map(file =>
-                new ConflictTreeItem(file, vscode.TreeItemCollapsibleState.None)
+                new ConflictTreeItem(file, workspaceRoot, vscode.TreeItemCollapsibleState.None)
             );
         } catch (error) {
             vscode.window.showErrorMessage(`检测冲突失败: ${error}`);
@@ -127,8 +150,12 @@ export class ConflictProvider implements vscode.TreeDataProvider<ConflictTreeIte
         // 应用装饰
         editor.setDecorations(this.conflictDecorationType, conflictMarkers);
 
+        const filePath = document.uri.fsPath;
+        const hasConflict = conflictMarkers.length > 0;
+        this.fileConflictState.set(filePath, hasConflict);
+
         // 如果发现冲突，显示提示
-        if (conflictMarkers.length > 0) {
+        if (hasConflict) {
             vscode.window.showWarningMessage(
                 `该文件包含 ${conflictMarkers.length} 处冲突`,
                 '解决冲突'

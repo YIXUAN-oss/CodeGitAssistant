@@ -82,6 +82,7 @@ export class DashboardPanel {
     private readonly _panel: vscode.WebviewPanel;
     private readonly _extensionUri: vscode.Uri;
     private _disposables: vscode.Disposable[] = [];
+    private _disposed = false;
 
     public static createOrShow(extensionUri: vscode.Uri, gitService: GitService) {
         const column = vscode.window.activeTextEditor
@@ -628,6 +629,10 @@ export class DashboardPanel {
     }
 
     public dispose() {
+        if (this._disposed) {
+            return;
+        }
+        this._disposed = true;
         DashboardPanel.currentPanel = undefined;
 
         this._panel.dispose();
@@ -665,6 +670,9 @@ export class DashboardPanel {
 
     private async _sendGitData() {
         try {
+            if (this._disposed) {
+                return;
+            }
             const isRepo = await this.gitService.isRepository();
             if (!isRepo) {
                 return;
@@ -771,6 +779,9 @@ export class DashboardPanel {
                 }))
                 : [];
 
+            if (this._disposed) {
+                return;
+            }
             this._panel.webview.postMessage({
                 type: 'gitData',
                 data: {
@@ -802,6 +813,10 @@ export class DashboardPanel {
             });
         } catch (error) {
             console.error('Error sending git data:', error);
+            // 如果面板已经被销毁，则不再尝试发送消息
+            if (this._disposed) {
+                return;
+            }
             // 即使出错也要发送一个空数据，避免一直加载
             this._panel.webview.postMessage({
                 type: 'gitData',
