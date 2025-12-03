@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { getThemeColors, isLightTheme } from '../utils/theme';
+import { getThemeColors } from '../utils/theme';
 
 /**
  * 辅助函数：截断文本以适应宽度
@@ -17,6 +17,10 @@ const truncateText = (ctx: CanvasRenderingContext2D, text: string, maxWidth: num
     return truncated;
 };
 
+const COMMIT_ROW_HEIGHT = 75;
+const COMMIT_TOP_MARGIN = 25;
+const COMMIT_BOTTOM_MARGIN = 80;
+
 /**
  * 提交历史图谱组件
  */
@@ -29,6 +33,7 @@ export const CommitGraph: React.FC<{ data: any }> = ({ data }) => {
         }
 
         const canvas = canvasRef.current;
+        const commits = data?.log?.all ?? [];
         const ctx = canvas.getContext('2d', {
             alpha: false, // 禁用透明度以提高性能
             desynchronized: false
@@ -39,17 +44,22 @@ export const CommitGraph: React.FC<{ data: any }> = ({ data }) => {
 
         // 获取设备像素比，用于高DPI显示
         const dpr = window.devicePixelRatio || 1;
-        const rect = canvas.getBoundingClientRect();
+        const container = canvas.parentElement || document.body;
+        const rect = container.getBoundingClientRect();
         const displayWidth = rect.width;
-        const displayHeight = rect.height;
+        const baseHeight = rect.height || 600;
+
+        const dynamicHeight = commits.length > 0
+            ? Math.max(baseHeight, COMMIT_TOP_MARGIN + commits.length * COMMIT_ROW_HEIGHT + COMMIT_BOTTOM_MARGIN)
+            : baseHeight;
 
         // 设置画布实际大小（考虑DPI）
         canvas.width = displayWidth * dpr;
-        canvas.height = displayHeight * dpr;
+        canvas.height = dynamicHeight * dpr;
 
         // 设置画布显示大小
         canvas.style.width = displayWidth + 'px';
-        canvas.style.height = displayHeight + 'px';
+        canvas.style.height = dynamicHeight + 'px';
 
         // 缩放上下文以匹配DPI
         ctx.scale(dpr, dpr);
@@ -69,7 +79,7 @@ export const CommitGraph: React.FC<{ data: any }> = ({ data }) => {
         const backgroundColor = computedStyle.backgroundColor || themeColors.background.primary;
 
         // 绘制提交图谱
-        drawCommitGraph(ctx, data.log.all, displayWidth, displayHeight, backgroundColor, themeColors);
+        drawCommitGraph(ctx, commits, displayWidth, dynamicHeight, backgroundColor, themeColors);
     }, [data]);
 
     const drawCommitGraph = (
@@ -89,10 +99,10 @@ export const CommitGraph: React.FC<{ data: any }> = ({ data }) => {
         }
 
         // 根据提交数量动态调整高度
-        const commitHeight = 75; // 增加高度以容纳更大字体
+        const commitHeight = COMMIT_ROW_HEIGHT;
         const commitRadius = 6;
         const leftMargin = 60;
-        const topMargin = 25;
+        const topMargin = COMMIT_TOP_MARGIN;
         const textX = leftMargin + 25;
         const maxWidth = width - textX - 20;
 
@@ -200,12 +210,21 @@ export const CommitGraph: React.FC<{ data: any }> = ({ data }) => {
                     可视化显示提交历史和分支关系
                 </p>
             </div>
-            <div className="graph-container">
+            <div
+                className="graph-container"
+                style={{
+                    height: '600px',
+                    maxHeight: '600px',
+                    overflowY: 'auto',
+                    border: '1px solid var(--vscode-panel-border)',
+                    borderRadius: '4px'
+                }}
+            >
                 <canvas
                     ref={canvasRef}
                     style={{
                         width: '100%',
-                        height: '600px',
+                        height: 'auto',
                         display: 'block',
                         imageRendering: 'crisp-edges'
                     }}

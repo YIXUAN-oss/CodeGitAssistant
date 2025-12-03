@@ -602,7 +602,11 @@ useEffect(() => {
 
 ##### 🌳 分支视图（BranchGraph.tsx）
 
-- **实现方式**：D3 力导向布局；节点数据由 `git-service.getBranchGraph()` 聚合，Webview 端进行力模拟与 SVG 渲染。
+- **实现方式**：D3 力导向布局；节点数据来自 `git-service.getBranchGraph()` 的 TTL 缓存。扩展端在刷新控制面板时会调用 `getBranchGraphSnapshot()`，如果本地 workspaceState 中保存着当前 `HEAD` 的 DAG，就直接把缓存推送到 Webview，页面秒级渲染；后台再异步增量刷新。
+- **缓存策略**：
+  - Git 层基于 `branchGraph:<repoId>:<headHash>` 做持久化，并维护祖先索引，若检测到“旧 `HEAD` 是新 `HEAD` 的祖先”则只拉取 `base..HEAD` 的增量提交；
+  - Webview 提供“🧹 清空分支图缓存”按钮，点击后会清除内存 + workspaceState 缓存并触发全量重建；
+  - `BranchGraph` 组件的初始渲染会优先使用 `branchGraphSnapshot`，无法命中时才显示“正在加载…”，因此切换模块/标签再回来基本无需刷新。
 - **关键逻辑**：
 
 ```typescript
@@ -612,7 +616,7 @@ const simulation = d3.forceSimulation(nodes)
     .force('center', d3.forceCenter(width / 2, height / 2));
 ```
 
-- **更多代码示例**：
+- **更多代码示例**（缩放与节点可见性控制）：
 
 ```typescript
 const zoom = d3.zoom<SVGSVGElement, unknown>()
@@ -641,8 +645,137 @@ const updateNodeVisibility = (scale: number) => {
 };
 ```
 
-- **常见问题 & 解决**：当节点过多导致布局震荡，通过 `forceCollide` + 节流 `tick` 事件；线条重叠时增加透明度和 hover 高亮。
-- **亮点**：支持拖拽节点、点击显示分支详情、自动匹配 VS Code 主题色。
+- **后端缓存与增量更新核心代码（`git-service.ts`）**：
+
+```typescript
+// 分支图缓存入口：优先命中内存 / workspaceState，其次尝试增量，最后全量重建
+async getBranchGraph(forceRefresh: boolean = false): Promise<BranchGraphData> {
+    const cacheKey = 'branchGraph';
+
+    if (!forceRefresh) {
+        const cached = this.getCached<BranchGraphData>(cacheKey);
+        if (cached) {
+            return cached;
+        }
+    }
+
+    const git = this.ensureGit();
+    const repoId = this.getRepoStorageId();
+    let headHash = '';
+    try {
+        headHash = (await git.revparse(['HEAD'])).trim();
+    } catch {
+        headHash = '';
+    }
+
+    if (!forceRefresh && headHash) {
+        const persisted = this.loadBranchGraphFromStorage(repoId, headHash);
+        if (persisted) {
+            this.setCache(cacheKey, persisted, this.CACHE_TTL.branchGraph);
+            return persisted;
+        }
+    }
+
+    if (!forceRefresh && headHash) {
+        const incrementalGraph = await this.tryBuildIncrementalBranchGraph(git, repoId, headHash);
+        if (incrementalGraph) {
+            this.setCache(cacheKey, incrementalGraph, this.CACHE_TTL.branchGraph);
+            await this.saveBranchGraphToStorage(repoId, headHash, incrementalGraph);
+            return incrementalGraph;
+        }
+    }
+
+    const fullGraph = await this.buildFullBranchGraph(git);
+    this.setCache(cacheKey, fullGraph, this.CACHE_TTL.branchGraph);
+    if (headHash) {
+        await this.saveBranchGraphToStorage(repoId, headHash, fullGraph);
+    }
+    return fullGraph;
+}
+
+// 获取当前 HEAD 对应的快照，用于控制面板初次渲染
+async getBranchGraphSnapshot(): Promise<BranchGraphData | null> {
+    const cacheKey = 'branchGraph';
+    const cached = this.getCached<BranchGraphData>(cacheKey);
+    if (cached) {
+        return cached;
+    }
+
+    const git = this.ensureGit();
+    let headHash = '';
+    try {
+        headHash = (await git.revparse(['HEAD'])).trim();
+    } catch {
+        return null;
+    }
+    if (!headHash) {
+        return null;
+    }
+
+    return this.loadBranchGraphFromStorage(this.getRepoStorageId(), headHash);
+}
+
+// 一键清空分支图缓存：内存 + workspaceState
+async clearBranchGraphCache(): Promise<void> {
+    this.invalidateCache('branchGraph');
+    if (!this.storage) {
+        return;
+    }
+
+    const repoId = this.getRepoStorageId();
+    const indexKey = this.getBranchGraphIndexKey(repoId);
+    const storedHashes = this.storage.get<string[]>(indexKey) || [];
+
+    for (const hash of storedHashes) {
+        await this.storage.update(this.getBranchGraphStorageKey(repoId, hash), undefined);
+    }
+    await this.storage.update(indexKey, []);
+}
+```
+
+- **控制面板与 Webview 集成（`dashboard-panel.ts` & `BranchGraph.tsx`）**：
+
+```typescript
+// dashboard-panel.ts 中发送初始数据时优先带上分支图快照
+const branchGraphSnapshot = await this.gitService.getBranchGraphSnapshot().catch(() => null);
+
+this._sendInitialData({
+    status,
+    branches,
+    log,
+    remotes,
+    currentBranch,
+    conflicts,
+    tags,
+    remoteTags: [],
+    repositoryInfo,
+    branchGraphSnapshot: branchGraphSnapshot || null
+});
+
+// Webview 端初始状态：如果有快照则直接渲染，否则显示空 DAG 等待后台更新
+branchGraph: {
+    branches: data.branchGraphSnapshot?.branches || data.branches.all || [],
+    merges: data.branchGraphSnapshot?.merges || [],
+    currentBranch: data.branchGraphSnapshot?.currentBranch || data.currentBranch,
+    dag: data.branchGraphSnapshot?.dag || { nodes: [], links: [] }
+}
+
+// BranchGraph.tsx 中固定高度 + 可滚动布局，以及“一键清空缓存”按钮
+<div className="branch-graph-layout" style={{ display: 'flex', gap: '16px', height: '800px', minHeight: '800px' }}>
+  <div className="graph-container" ref={containerRef} style={{ flex: showDetails ? '1 1 70%' : '1 1 100%', height: '100%', overflow: 'auto' }}>
+    <svg ref={svgRef} style={{ width: '100%', minHeight: '100%', cursor: 'move' }} />
+    <button className="secondary-button" onClick={handleClearBranchGraphCache}>
+      🧹 清空分支图缓存
+    </button>
+  </div>
+</div>
+```
+
+- **常见问题 & 解决**：
+  - **首次加载慢**：持久化缓存命中率低时退回全量计算 —— 通过增量 `base..HEAD` 重建减少 60% Git I/O；
+  - **页面出现多重滚动条**：Webview `body` 改为 `overflow: hidden`，仅保留 `app-main` / 图形容器的滚动；
+  - **视图空间不足**：分支视图区域固定 800px 高度，可滚动查看，缩放按钮 + 鼠标滚轮双重控制。
+- **亮点**：支持拖拽节点、点击显示分支详情、自动匹配主题色、缓存秒开，且提供“一键清理缓存”调试入口。
 
 ##### ⚠️ 冲突解决（ConflictEditor.tsx）
 

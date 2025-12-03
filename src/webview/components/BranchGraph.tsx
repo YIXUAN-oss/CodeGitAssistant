@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { getThemeColors } from '../utils/theme';
+declare const vscode: any;
 
 /**
  * 格式化相对时间的辅助函数
@@ -41,6 +42,14 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
 
     // 获取主题颜色（在组件顶层，以便在 JSX 中使用）
     const themeColors = getThemeColors();
+
+    const handleClearBranchGraphCache = () => {
+        const confirmed = window.confirm('确定要清空分支图缓存并重新加载数据吗？');
+        if (!confirmed) {
+            return;
+        }
+        vscode.postMessage({ command: 'clearBranchGraphCache' });
+    };
 
     useEffect(() => {
         if (!svgRef.current || !containerRef.current || !data?.branchGraph?.dag) {
@@ -776,13 +785,24 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
     return (
         <div className="branch-graph">
             <div className="section-header">
-                <h2>分支视图</h2>
-                <p className="section-description">
-                    使用 D3.js 可视化 Git 分支的有向无环图（DAG）结构
-                </p>
-                <div className="graph-stats">
-                    <span>节点: {nodeCount}</span>
-                    <span>链接: {linkCount}</span>
+                <div>
+                    <h2>分支视图</h2>
+                    <p className="section-description">
+                        使用 D3.js 可视化 Git 分支的有向无环图（DAG）结构
+                    </p>
+                    <div className="graph-stats">
+                        <span>节点: {nodeCount}</span>
+                        <span>链接: {linkCount}</span>
+                    </div>
+                </div>
+                <div className="graph-actions" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <button
+                        className="secondary-button"
+                        onClick={handleClearBranchGraphCache}
+                        title="清空分支图缓存并重新加载"
+                    >
+                        🧹 清空分支图缓存
+                    </button>
                 </div>
             </div>
             <div className="branch-graph-content" style={{ width: '100%', minWidth: 0, overflow: 'visible' }}>
@@ -920,7 +940,7 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
                         💡 提示：可以拖拽节点移动，使用鼠标滚轮缩放，拖拽空白区域平移，点击节点查看详情
                     </div>
                 </div>
-                <div className="branch-graph-layout" style={{ display: 'flex', gap: '16px', height: '600px' }}>
+                <div className="branch-graph-layout" style={{ display: 'flex', gap: '16px', height: '800px', minHeight: '800px' }}>
                     <div className="graph-container" ref={containerRef} style={{
                         flex: showDetails ? '1 1 70%' : '1 1 100%',
                         height: '100%',

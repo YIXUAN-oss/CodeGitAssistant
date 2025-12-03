@@ -1,7 +1,15 @@
 /* 全局样式 */
+html,
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+}
+
 .app-container {
     width: 100%;
-    height: 100vh;
+    height: 100%;
     display: flex;
     flex-direction: column;
     font-family: var(--vscode-font-family);

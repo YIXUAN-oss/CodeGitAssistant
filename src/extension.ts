@@ -20,8 +20,8 @@ export function activate(context: vscode.ExtensionContext) {
     CommandHistory.initialize(context);
     MergeHistory.initialize(context);
 
-    // 初始化Git服务
-    const gitService = new GitService();
+    // 初始化Git服务（带 workspaceState，用于持久化缓存）
+    const gitService = new GitService(context);
 
     // 注册数据提供者
     const branchProvider = new BranchProvider(gitService);

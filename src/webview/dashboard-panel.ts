@@ -203,6 +203,16 @@ export class DashboardPanel {
                         case 'pushAllTags':
                             await this._handlePushAllTags();
                             break;
+                        case 'clearBranchGraphCache':
+                            try {
+                                await this.gitService.clearBranchGraphCache();
+                                vscode.window.showInformationMessage('分支图缓存已清空，将重新加载数据');
+                                await this._sendGitData();
+                            } catch (error) {
+                                const errorMessage = error instanceof Error ? error.message : String(error);
+                                vscode.window.showErrorMessage(`清空分支图缓存失败: ${errorMessage}`);
+                            }
+                            break;
                         case 'initRepository':
                             try {
                                 // 执行初始化命令（命令内部会记录命令历史）
@@ -966,7 +976,9 @@ export class DashboardPanel {
                 }
             };
 
-            // 发送初始数据（不包含耗时数据，远程标签异步加载）
+            const branchGraphSnapshot = await this.gitService.getBranchGraphSnapshot().catch(() => null);
+
+            // 发送初始数据（尽可能带上缓存的分支图，远程标签异步加载）
             this._sendInitialData({
                 status,
                 branches,
@@ -976,7 +988,8 @@ export class DashboardPanel {
                 conflicts,
                 tags,
                 remoteTags: [], // 初始为空，异步加载
-                repositoryInfo
+                repositoryInfo,
+                branchGraphSnapshot: branchGraphSnapshot || null
             });
 
             // 异步加载远程标签（使用缓存，加快速度）
@@ -1031,7 +1044,8 @@ export class DashboardPanel {
                 conflicts: [],
                 tags: [],
                 remoteTags: [],
-                repositoryInfo: null
+                repositoryInfo: null,
+                branchGraphSnapshot: null
             });
         }
     }
@@ -1049,6 +1063,7 @@ export class DashboardPanel {
         tags: any[];
         remoteTags: Array<{ name: string; commit: string }>;
         repositoryInfo: any;
+        branchGraphSnapshot: any | null;
     }) {
         if (this._disposed) {
             return;
@@ -1061,10 +1076,10 @@ export class DashboardPanel {
                 fileStats: [],
                 contributorStats: [],
                 branchGraph: {
-                    branches: data.branches.all || [],
-                    merges: [],
-                    currentBranch: data.currentBranch,
-                    dag: {
+                    branches: data.branchGraphSnapshot?.branches || data.branches.all || [],
+                    merges: data.branchGraphSnapshot?.merges || [],
+                    currentBranch: data.branchGraphSnapshot?.currentBranch || data.currentBranch,
+                    dag: data.branchGraphSnapshot?.dag || {
                         nodes: [],
                         links: []
                     }

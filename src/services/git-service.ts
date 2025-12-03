@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import simpleGit, { SimpleGit, StatusResult, BranchSummary, LogResult } from 'simple-git';
-import * as path from 'path';
 import { MergeHistory } from '../utils/merge-history';
 
 /**
@@ -13,14 +12,51 @@ interface CacheItem<T> {
 }
 
 /**
+ * 分支视图 DAG 结构
+ */
+interface BranchGraphDag {
+    nodes: Array<{
+        hash: string;
+        parents: string[];
+        branches: string[];
+        timestamp: number;
+        isMerge: boolean;
+    }>;
+    links: Array<{
+        source: string;
+        target: string;
+    }>;
+}
+
+/**
+ * 分支视图整体数据
+ */
+export interface BranchGraphData {
+    branches: string[];
+    merges: Array<{ from: string; to: string; commit: string; type: 'three-way' | 'fast-forward'; description?: string; timestamp?: number }>;
+    currentBranch?: string;
+    dag?: BranchGraphDag;
+}
+
+interface CommitNodeInfo {
+    hash: string;
+    parents: string[];
+    timestamp: number;
+    branches: Set<string>;
+}
+
+/**
  * Git服务类 - 封装所有Git操作
  */
 export class GitService {
     private git: SimpleGit | null = null;
     private workspaceRoot: string | undefined;
 
-    // 缓存存储
-    private cache: Map<string, CacheItem<any>> = new Map();
+    // 缓存存储（内存级）
+    private cache: Map<string, CacheItem<unknown>> = new Map();
+
+    // 持久化存储（workspace 级）
+    private storage: vscode.Memento | null = null;
 
     // 缓存配置
     private readonly CACHE_TTL = {
@@ -33,8 +69,344 @@ export class GitService {
         branchGraph: 10000,    // 分支图缓存10秒（计算成本高，延长缓存时间）
     };
 
-    constructor() {
+    // 分支视图最大分析提交数，避免在超大仓库中遍历所有历史导致卡顿
+    // 800 左右在大多数仓库下可以覆盖最近的分支/合并关系，同时保证加载速度
+    private static readonly BRANCH_GRAPH_MAX_COMMITS = 800;
+
+    constructor(context?: vscode.ExtensionContext) {
+        // 使用 workspaceState 进行持久化缓存（随工作区而变）
+        this.storage = context?.workspaceState ?? null;
         this.initialize();
+    }
+
+    private async buildFullBranchGraph(git: SimpleGit): Promise<BranchGraphData> {
+        try {
+            const logOutput = await git.raw([
+                'log',
+                '--all',
+                `--max-count=${GitService.BRANCH_GRAPH_MAX_COMMITS}`,
+                '--topo-order',
+                '--date-order',
+                '--format=%H%x00%P%x00%D%x00%ct',
+                '--decorate=full'
+            ]);
+
+            const commits = this.parseGitLogToCommitMap(logOutput);
+            this.enforceCommitLimit(commits);
+            const branchSummary = await git.branch();
+
+            if (commits.size === 0) {
+                return {
+                    branches: branchSummary.all.filter(b => !b.startsWith('remotes/')),
+                    merges: [],
+                    currentBranch: branchSummary.current || undefined,
+                    dag: {
+                        nodes: [],
+                        links: []
+                    }
+                };
+            }
+
+            return this.buildBranchGraphFromCommitMap(commits, branchSummary);
+        } catch (error) {
+            console.error('Error getting branch graph:', error);
+            return {
+                branches: [],
+                merges: [],
+                currentBranch: undefined,
+                dag: {
+                    nodes: [],
+                    links: []
+                }
+            };
+        }
+    }
+
+    private async tryBuildIncrementalBranchGraph(git: SimpleGit, repoId: string, headHash: string): Promise<BranchGraphData | null> {
+        if (!this.storage) {
+            return null;
+        }
+
+        const indexKey = this.getBranchGraphIndexKey(repoId);
+        const storedHashes = this.storage.get<string[]>(indexKey) || [];
+        if (storedHashes.length === 0) {
+            return null;
+        }
+
+        for (let i = storedHashes.length - 1; i >= 0; i--) {
+            const candidate = storedHashes[i];
+            if (!candidate || candidate === headHash) {
+                continue;
+            }
+            const baseGraph = this.loadBranchGraphFromStorage(repoId, candidate);
+            if (!baseGraph || !baseGraph.dag) {
+                continue;
+            }
+            const ancestor = await this.isAncestor(git, candidate, headHash);
+            if (!ancestor) {
+                continue;
+            }
+            const incremental = await this.buildBranchGraphIncrementally(git, baseGraph, candidate, headHash);
+            if (incremental) {
+                return incremental;
+            }
+        }
+
+        return null;
+    }
+
+    private async buildBranchGraphIncrementally(git: SimpleGit, baseGraph: BranchGraphData, baseHash: string, headHash: string): Promise<BranchGraphData | null> {
+        if (!baseGraph.dag) {
+            return null;
+        }
+
+        let logOutput = '';
+        try {
+            logOutput = await git.raw([
+                'log',
+                `${baseHash}..${headHash}`,
+                '--topo-order',
+                '--date-order',
+                '--format=%H%x00%P%x00%D%x00%ct',
+                '--decorate=full'
+            ]);
+        } catch (error) {
+            console.warn('增量获取分支图失败:', error);
+            return null;
+        }
+
+        const branchSummary = await git.branch();
+        const newCommits = this.parseGitLogToCommitMap(logOutput);
+        const combinedCommits = new Map<string, CommitNodeInfo>();
+
+        newCommits.forEach((node, hash) => combinedCommits.set(hash, node));
+
+        if (baseGraph.dag.nodes) {
+            for (const node of baseGraph.dag.nodes) {
+                if (!combinedCommits.has(node.hash)) {
+                    combinedCommits.set(node.hash, {
+                        hash: node.hash,
+                        parents: node.parents || [],
+                        timestamp: node.timestamp,
+                        branches: new Set(node.branches || [])
+                    });
+                }
+            }
+        }
+
+        if (combinedCommits.size === 0) {
+            return {
+                ...baseGraph,
+                branches: branchSummary.all.filter(b => !b.startsWith('remotes/')),
+                currentBranch: branchSummary.current || baseGraph.currentBranch
+            };
+        }
+
+        this.enforceCommitLimit(combinedCommits);
+        return this.buildBranchGraphFromCommitMap(combinedCommits, branchSummary);
+    }
+
+    private parseGitLogToCommitMap(logOutput: string): Map<string, CommitNodeInfo> {
+        const commits = new Map<string, CommitNodeInfo>();
+        if (!logOutput || !logOutput.trim()) {
+            return commits;
+        }
+
+        const logLines = logOutput.trim().split('\n').filter(line => line.trim());
+        for (const line of logLines) {
+            const parts = line.split('\x00');
+            if (parts.length < 4) {
+                continue;
+            }
+
+            const hash = parts[0].trim();
+            if (!hash) {
+                continue;
+            }
+            const parentStr = parts[1].trim();
+            const refStr = parts[2].trim();
+            const timestampStr = parts[3].trim();
+
+            const parents = parentStr ? parentStr.split(/\s+/).filter(p => p.trim()) : [];
+            const refs = refStr ? refStr.split(',').map(r => r.trim()).filter(r => r) : [];
+            const branchNames = refs
+                .filter(r => r.startsWith('refs/heads/'))
+                .map(r => r.replace('refs/heads/', ''));
+            const timestamp = timestampStr ? parseInt(timestampStr, 10) * 1000 : Date.now();
+
+            commits.set(hash, {
+                hash,
+                parents,
+                timestamp,
+                branches: new Set(branchNames)
+            });
+        }
+
+        return commits;
+    }
+
+    private enforceCommitLimit(commits: Map<string, CommitNodeInfo>): void {
+        const limit = GitService.BRANCH_GRAPH_MAX_COMMITS;
+        while (commits.size > limit) {
+            let lastKey: string | undefined;
+            for (const key of commits.keys()) {
+                lastKey = key;
+            }
+            if (!lastKey) {
+                break;
+            }
+            commits.delete(lastKey);
+        }
+    }
+
+    private buildBranchGraphFromCommitMap(commits: Map<string, CommitNodeInfo>, branchSummary: BranchSummary): BranchGraphData {
+        const allBranches = branchSummary.all.filter(b => !b.startsWith('remotes/'));
+        const currentBranch = branchSummary.current || 'main';
+        const merges: Array<{ from: string; to: string; commit: string; type: 'three-way' | 'fast-forward'; description?: string; timestamp?: number }> = [];
+
+        for (const [commitHash, commitNode] of commits.entries()) {
+            if (commitNode.parents.length >= 2) {
+                const firstParentNode = commits.get(commitNode.parents[0]);
+                const secondParentNode = commits.get(commitNode.parents[1]);
+                if (!firstParentNode || !secondParentNode) {
+                    continue;
+                }
+
+                const commitBranches = commitNode.branches;
+                const toBranchCandidates = Array.from(commitBranches).filter(branch =>
+                    firstParentNode.branches.has(branch) && !secondParentNode.branches.has(branch)
+                );
+
+                const fromBranchCandidates = Array.from(secondParentNode.branches).filter(branch => {
+                    if (firstParentNode.branches.has(branch)) {
+                        return commitBranches.has(branch) && !toBranchCandidates.includes(branch);
+                    }
+                    return true;
+                });
+
+                if (toBranchCandidates.length > 0 && fromBranchCandidates.length > 0) {
+                    const toBranch = toBranchCandidates.includes(currentBranch)
+                        ? currentBranch
+                        : toBranchCandidates[0];
+                    const fromBranch = fromBranchCandidates[0];
+
+                    if (fromBranch !== toBranch) {
+                        const existingIndex = merges.findIndex(m => m.from === fromBranch && m.to === toBranch);
+                        if (existingIndex < 0) {
+                            merges.push({
+                                from: fromBranch,
+                                to: toBranch,
+                                commit: commitHash,
+                                type: 'three-way',
+                                description: `三路合并：${fromBranch} → ${toBranch}`,
+                                timestamp: commitNode.timestamp
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        try {
+            const recorded = MergeHistory.getHistory();
+            for (const item of recorded) {
+                if (item.type !== 'three-way') {
+                    continue;
+                }
+                if (!allBranches.includes(item.from) || !allBranches.includes(item.to)) {
+                    continue;
+                }
+                const existingIndex = merges.findIndex(m => m.from === item.from && m.to === item.to);
+                if (existingIndex < 0) {
+                    merges.push(item);
+                }
+            }
+        } catch (error) {
+            console.warn('读取合并历史失败:', error);
+        }
+
+        const threeWayMerges = merges.filter(m => m.type === 'three-way');
+
+        const dagNodes = Array.from(commits.values()).map(commit => ({
+            hash: commit.hash,
+            parents: commit.parents,
+            branches: Array.from(commit.branches),
+            timestamp: commit.timestamp,
+            isMerge: commit.parents.length >= 2
+        }));
+
+        const dagLinks: Array<{ source: string; target: string }> = [];
+        commits.forEach((commit, hash) => {
+            commit.parents.forEach(parent => {
+                dagLinks.push({
+                    source: parent,
+                    target: hash
+                });
+            });
+        });
+
+        return {
+            branches: allBranches,
+            merges: threeWayMerges,
+            currentBranch,
+            dag: {
+                nodes: dagNodes,
+                links: dagLinks
+            }
+        };
+    }
+
+    private async isAncestor(git: SimpleGit, ancestor: string, descendant: string): Promise<boolean> {
+        if (!ancestor || !descendant) {
+            return false;
+        }
+        try {
+            await git.raw(['merge-base', '--is-ancestor', ancestor, descendant]);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * 获取用于存储的仓库唯一标识（编码后的工作区路径）
+     */
+    private getRepoStorageId(): string {
+        const root =
+            this.workspaceRoot ||
+            vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ||
+            'default';
+        return encodeURIComponent(root);
+    }
+
+    private getBranchGraphStorageKey(repoId: string, headHash: string): string {
+        return `branchGraph:${repoId}:${headHash}`;
+    }
+
+    private getBranchGraphIndexKey(repoId: string): string {
+        return `branchGraphIndex:${repoId}`;
+    }
+
+    private loadBranchGraphFromStorage(repoId: string, headHash: string): BranchGraphData | null {
+        if (!this.storage || !repoId || !headHash) {
+            return null;
+        }
+        return this.storage.get<BranchGraphData>(this.getBranchGraphStorageKey(repoId, headHash)) || null;
+    }
+
+    private async saveBranchGraphToStorage(repoId: string, headHash: string, data: BranchGraphData): Promise<void> {
+        if (!this.storage || !repoId || !headHash) {
+            return;
+        }
+
+        const storageKey = this.getBranchGraphStorageKey(repoId, headHash);
+        await this.storage.update(storageKey, data);
+
+        const indexKey = this.getBranchGraphIndexKey(repoId);
+        const existingIndex = this.storage.get<string[]>(indexKey) || [];
+        if (!existingIndex.includes(headHash)) {
+            await this.storage.update(indexKey, [...existingIndex, headHash]);
+        }
     }
 
     /**
@@ -80,6 +452,32 @@ export class GitService {
             if (key.includes(pattern)) {
                 this.cache.delete(key);
             }
+        }
+    }
+
+    /**
+     * 清空分支图缓存（内存 + 持久化）
+     */
+    async clearBranchGraphCache(): Promise<void> {
+        // 清除内存缓存
+        this.invalidateCache('branchGraph');
+
+        if (!this.storage) {
+            return;
+        }
+
+        try {
+            const repoId = this.getRepoStorageId();
+            const indexKey = this.getBranchGraphIndexKey(repoId);
+            const storedHashes = this.storage.get<string[]>(indexKey) || [];
+
+            for (const hash of storedHashes) {
+                await this.storage.update(this.getBranchGraphStorageKey(repoId, hash), undefined);
+            }
+
+            await this.storage.update(indexKey, []);
+        } catch (error) {
+            console.warn('清空分支图缓存失败:', error);
         }
     }
 
@@ -878,269 +1276,71 @@ export class GitService {
      * 获取分支关系图数据
      * 完全基于提交及其 parent 关系构建，不进行推断
      */
-    async getBranchGraph(forceRefresh: boolean = false): Promise<{
-        branches: string[];
-        merges: Array<{ from: string; to: string; commit: string; type: 'three-way' | 'fast-forward'; description?: string; timestamp?: number }>;
-        currentBranch?: string;
-        dag?: {
-            nodes: Array<{
-                hash: string;
-                parents: string[];
-                branches: string[];
-                timestamp: number;
-                isMerge: boolean;
-            }>;
-            links: Array<{
-                source: string;
-                target: string;
-            }>;
-        };
-    }> {
+    async getBranchGraph(forceRefresh: boolean = false): Promise<BranchGraphData> {
         const cacheKey = 'branchGraph';
 
         if (!forceRefresh) {
-            const cached = this.getCached<any>(cacheKey);
+            const cached = this.getCached<BranchGraphData>(cacheKey);
             if (cached) {
                 return cached;
             }
         }
 
         const git = this.ensureGit();
-        const merges: Array<{ from: string; to: string; commit: string; type: 'three-way' | 'fast-forward'; description?: string; timestamp?: number }> = [];
+        const repoId = this.getRepoStorageId();
 
+        let headHash = '';
         try {
-            // 获取所有分支
-            const branches = await git.branch();
-            const allBranches = branches.all.filter(b => !b.startsWith('remotes/')); // 只使用本地分支
-            const currentBranch = branches.current || 'main';
-
-            // ========== 第一步：使用 git log --format="%H %P %D" 一次性获取结构化数据 ==========
-            // 使用 --all 获取所有分支，--topo-order 保证拓扑顺序，--date-order 按日期排序
-            // %H = 完整哈希，%P = 父提交（空格分隔），%D = 引用（分支/标签），%ct = 时间戳
-            // 使用 null 字符 (\x00) 作为分隔符，避免与空格冲突
-            const logOutput = await git.raw([
-                'log',
-                '--all',
-                '--topo-order',
-                '--date-order',
-                '--format=%H%x00%P%x00%D%x00%ct',
-                '--decorate=full'
-            ]);
-
-            interface CommitNode {
-                hash: string;
-                parents: string[];
-                timestamp: number;
-                branches: Set<string>; // 包含这个提交的分支（从 refs/heads/ 提取）
-                refs: string[]; // 完整的引用列表
-            }
-
-            const commits = new Map<string, CommitNode>();
-            const branchHeads = new Map<string, string>(); // 分支名 -> HEAD 提交哈希
-
-            // 解析日志输出（使用 null 字符分隔）
-            const logLines = logOutput.trim().split('\n').filter(line => line.trim());
-            for (const line of logLines) {
-                const parts = line.split('\x00');
-                if (parts.length < 4) continue;
-
-                const hash = parts[0].trim();
-                const parentStr = parts[1].trim();
-                const refStr = parts[2].trim();
-                const timestampStr = parts[3].trim();
-
-                // 解析父提交（可能有多个，空格分隔）
-                const parents = parentStr ? parentStr.split(/\s+/).filter(p => p.trim()) : [];
-
-                // 解析引用（可能有多个，逗号分隔）
-                const refs = refStr ? refStr.split(',').map(r => r.trim()).filter(r => r) : [];
-
-                // 提取分支名（从 refs/heads/ 开头的引用中提取）
-                const branchNames = refs
-                    .filter(r => r.startsWith('refs/heads/'))
-                    .map(r => r.replace('refs/heads/', ''));
-
-                // 解析时间戳
-                const timestamp = timestampStr ? parseInt(timestampStr, 10) * 1000 : Date.now();
-
-                // 创建或更新提交节点
-                if (!commits.has(hash)) {
-                    commits.set(hash, {
-                        hash,
-                        parents,
-                        timestamp,
-                        branches: new Set(branchNames),
-                        refs
-                    });
-                } else {
-                    // 如果已存在，合并分支信息
-                    branchNames.forEach(branch => commits.get(hash)!.branches.add(branch));
-                    commits.get(hash)!.refs = [...new Set([...commits.get(hash)!.refs, ...refs])];
-                }
-
-                // 记录分支的 HEAD（每个分支的第一个提交就是 HEAD）
-                branchNames.forEach(branch => {
-                    if (!branchHeads.has(branch)) {
-                        branchHeads.set(branch, hash);
-                    }
-                });
-            }
-
-            // ========== 第二步：识别三路合并（有多个 parent 的提交）==========
-            for (const [commitHash, commitNode] of commits.entries()) {
-                // 合并提交有多个 parent
-                if (commitNode.parents.length >= 2) {
-                    const firstParent = commitNode.parents[0];
-                    const secondParent = commitNode.parents[1];
-
-                    // 获取每个 parent 所属的分支
-                    const firstParentNode = commits.get(firstParent);
-                    const secondParentNode = commits.get(secondParent);
-
-                    if (!firstParentNode || !secondParentNode) {
-                        continue; // parent 不在我们的提交图中
-                    }
-
-                    const firstParentBranches = firstParentNode.branches;
-                    const secondParentBranches = secondParentNode.branches;
-
-                    // 找出目标分支：包含合并提交，且包含第一个 parent 的分支
-                    // 第一个 parent 通常是目标分支的 HEAD
-                    const toBranchCandidates = Array.from(commitNode.branches).filter(branch =>
-                        firstParentBranches.has(branch) && !secondParentBranches.has(branch)
-                    );
-
-                    // 找出被合并的分支：包含第二个 parent 但不包含第一个 parent 的分支
-                    // 第二个 parent 是被合并分支的 HEAD
-                    // 被合并的分支应该：
-                    // 1. 包含第二个 parent（被合并分支的 HEAD）
-                    // 2. 不包含第一个 parent（目标分支的 HEAD），或者虽然包含第一个 parent 但合并提交不属于它
-                    const fromBranchCandidates = Array.from(secondParentBranches).filter(branch => {
-                        // 如果分支包含第一个 parent，需要进一步判断
-                        if (firstParentBranches.has(branch)) {
-                            // 如果合并提交也属于这个分支，且它不是目标分支，那么它可能是被合并的分支
-                            // 但这种情况比较少见，通常被合并的分支不应该包含第一个 parent
-                            return commitNode.branches.has(branch) && !toBranchCandidates.includes(branch);
-                        }
-                        // 不包含第一个 parent 的分支，肯定是候选的被合并分支
-                        return true;
-                    });
-
-                    // 调试日志（仅在开发模式下）
-                    if (process.env.NODE_ENV === 'development' && commitHash) {
-                        console.log(`[BranchGraph] 合并提交 ${commitHash.substring(0, 7)}:`, {
-                            firstParent: firstParent.substring(0, 7),
-                            secondParent: secondParent.substring(0, 7),
-                            firstParentBranches: Array.from(firstParentBranches),
-                            secondParentBranches: Array.from(secondParentBranches),
-                            commitBranches: Array.from(commitNode.branches),
-                            toBranchCandidates,
-                            fromBranchCandidates
-                        });
-                    }
-
-                    if (toBranchCandidates.length > 0 && fromBranchCandidates.length > 0) {
-                        // 优先选择当前分支作为目标分支
-                        const toBranch = toBranchCandidates.includes(currentBranch)
-                            ? currentBranch
-                            : toBranchCandidates[0];
-                        const fromBranch = fromBranchCandidates[0];
-
-                        if (fromBranch !== toBranch) {
-                            const existingIndex = merges.findIndex(m =>
-                                m.from === fromBranch && m.to === toBranch
-                            );
-
-                            if (existingIndex < 0) {
-                                merges.push({
-                                    from: fromBranch,
-                                    to: toBranch,
-                                    commit: commitHash,
-                                    type: 'three-way',
-                                    description: `三路合并：${fromBranch} → ${toBranch}`,
-                                    timestamp: commitNode.timestamp
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ========== 第三步：合并历史中记录的关系（只保留三路合并）==========
-            try {
-                const recorded = MergeHistory.getHistory();
-                for (const item of recorded) {
-                    // 只处理三路合并，忽略快速合并
-                    if (item.type !== 'three-way') {
-                        continue;
-                    }
-
-                    if (!allBranches.includes(item.from) || !allBranches.includes(item.to)) {
-                        continue;
-                    }
-
-                    const existingIndex = merges.findIndex(m => m.from === item.from && m.to === item.to);
-                    if (existingIndex < 0) {
-                        // 如果不存在，添加三路合并记录
-                        merges.push(item);
-                    }
-                    // 如果已存在，保持现有的三路合并记录（不覆盖）
-                }
-            } catch (error) {
-                console.warn('读取合并历史失败:', error);
-            }
-
-            // 过滤掉所有快速合并，只保留三路合并
-            const threeWayMerges = merges.filter(m => m.type === 'three-way');
-
-            // 再次获取分支列表（确保获取最新）
-            const finalBranches = await git.branch();
-
-            // 构建 DAG 数据用于可视化
-            const dagNodes = Array.from(commits.values()).map(commit => ({
-                hash: commit.hash,
-                parents: commit.parents,
-                branches: Array.from(commit.branches),
-                timestamp: commit.timestamp,
-                isMerge: commit.parents.length >= 2
-            }));
-
-            const dagLinks: Array<{ source: string; target: string }> = [];
-            commits.forEach((commit, hash) => {
-                commit.parents.forEach(parent => {
-                    dagLinks.push({
-                        source: parent,
-                        target: hash
-                    });
-                });
-            });
-
-            const result = {
-                branches: finalBranches.all,
-                merges: threeWayMerges,
-                currentBranch: finalBranches.current,
-                dag: {
-                    nodes: dagNodes,
-                    links: dagLinks
-                }
-            };
-
-            // 缓存结果
-            this.setCache(cacheKey, result, this.CACHE_TTL.branchGraph);
-            return result;
-        } catch (error) {
-            console.error('Error getting branch graph:', error);
-            // 如果无法获取，返回空数组
-            return {
-                branches: [],
-                merges: [],
-                currentBranch: undefined,
-                dag: {
-                    nodes: [],
-                    links: []
-                }
-            };
+            headHash = (await git.revparse(['HEAD'])).trim();
+        } catch {
+            headHash = '';
         }
+
+        if (!forceRefresh && headHash) {
+            const persisted = this.loadBranchGraphFromStorage(repoId, headHash);
+            if (persisted) {
+                this.setCache(cacheKey, persisted, this.CACHE_TTL.branchGraph);
+                return persisted;
+            }
+        }
+
+        if (!forceRefresh && headHash) {
+            const incrementalGraph = await this.tryBuildIncrementalBranchGraph(git, repoId, headHash);
+            if (incrementalGraph) {
+                this.setCache(cacheKey, incrementalGraph, this.CACHE_TTL.branchGraph);
+                await this.saveBranchGraphToStorage(repoId, headHash, incrementalGraph);
+                return incrementalGraph;
+            }
+        }
+
+        const fullGraph = await this.buildFullBranchGraph(git);
+        this.setCache(cacheKey, fullGraph, this.CACHE_TTL.branchGraph);
+        if (headHash) {
+            await this.saveBranchGraphToStorage(repoId, headHash, fullGraph);
+        }
+        return fullGraph;
+    }
+
+    async getBranchGraphSnapshot(): Promise<BranchGraphData | null> {
+        const cacheKey = 'branchGraph';
+        const cached = this.getCached<BranchGraphData>(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
+        const git = this.ensureGit();
+        let headHash = '';
+        try {
+            headHash = (await git.revparse(['HEAD'])).trim();
+        } catch {
+            return null;
+        }
+
+        if (!headHash) {
+            return null;
+        }
+
+        return this.loadBranchGraphFromStorage(this.getRepoStorageId(), headHash);
     }
 
     /**
