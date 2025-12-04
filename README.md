@@ -20,6 +20,14 @@
 - **技术栈**：TypeScript + VS Code Extension API + React 18 + D3.js + simple-git
 - **性能指标**：激活 < 500ms · 控制面板基础数据刷新 < 400ms · 大仓库统计数据 < 1.5s
 
+
+
+## ✨ 演示视频
+
+http://go.plvideo.cn/front/video/view?vid=y87d9a2d3cf2fc80889781fae7d16a95_y
+
+
+
 ## ✨ 功能特性
 
 ### 🚀 快捷 Git 操作

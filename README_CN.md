@@ -20,6 +20,14 @@
 - **技术栈**：TypeScript + VS Code Extension API + React 18 + D3.js + simple-git
 - **性能指标**：扩展激活 < 500ms · 面板基础数据 < 400ms · 大仓库统计 < 1.5s
 
+
+
+## ✨ 演示视频
+
+http://go.plvideo.cn/front/video/view?vid=y87d9a2d3cf2fc80889781fae7d16a95_y
+
+
+
 ## ✨ 功能特性
 
 ### 🚀 快捷 Git 操作
@@ -382,16 +390,21 @@ npm run lint
 npm run compile
 ```
 
-## 📞 获取帮助
-
-- 📖 [文档中心](https://github.com/YIXUAN-oss/CodeGitAssistant/wiki)
-- 💬 [讨论区](https://github.com/YIXUAN-oss/CodeGitAssistant/discussions)
-- 🐛 [问题追踪](https://github.com/YIXUAN-oss/CodeGitAssistant/issues)
-- 📧 邮件支持: support@gitassistant.com
-
 ## 📄 许可证
 
-MIT License - 详见 [LICENSE](LICENSE) 文件
+本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
+
+## 🙏 致谢
+
+- [simple-git](https://github.com/steveukx/git-js) - Git操作库
+- [VS Code Extension API](https://code.visualstudio.com/api) - 扩展开发文档
+- [React](https://react.dev/) - UI框架
+
+## 📮 联系方式
+
+- 问题反馈：[GitHub Issues](https://github.com/YIXUAN-oss/CodeGitAssistant/issues)
+- 功能建议：[GitHub Discussions](https://github.com/YIXUAN-oss/CodeGitAssistant/discussions)
+- 邮箱：byyi.xuan@outlook.com
 
 ---
 
