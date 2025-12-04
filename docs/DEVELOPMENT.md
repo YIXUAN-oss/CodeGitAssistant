@@ -528,6 +528,9 @@ if (confirmed === '删除') {
 const config = vscode.workspace.getConfiguration('git-assistant');
 const autoFetch = config.get<boolean>('autoFetch', true);
 const confirmPush = config.get<boolean>('confirmPush', true);
+const defaultRemote = config.get<string>('defaultRemote', '');
+const maxHistoryCount = config.get<number>('maxHistoryCount', 100);
+const conflictHighlight = config.get<boolean>('conflictHighlight', true);
 ```
 
 ### 5. 命令历史记录

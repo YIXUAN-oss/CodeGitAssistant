@@ -30,7 +30,9 @@ const getRelativeTime = (dateString: string): string => {
 /**
  * Git 分支视图组件 - 使用 D3.js 可视化 Git 分支的 DAG 结构
  */
-export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
+import { GitData } from '../../types/git';
+
+export const BranchGraph: React.FC<{ data: GitData }> = ({ data }) => {
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [selectedNode, setSelectedNode] = useState<any>(null);
@@ -56,8 +58,8 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
             return;
         }
 
-        const dag = data.branchGraph.dag;
-        if (!dag.nodes || dag.nodes.length === 0) {
+        const dag = data.branchGraph?.dag;
+        if (!dag || !dag.nodes || dag.nodes.length === 0) {
             return;
         }
 
@@ -423,28 +425,8 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
         const startY = padding;
         const startX = padding;
 
-        // 调试：输出轨道分配信息
-        console.log('=== 分支视图轨道分配调试信息 ===');
-        console.log(`总提交数: ${nodes.length}, 最大层级: ${maxLevel}`);
-        console.log(`所有分支: ${Array.from(branchLaneMap.keys()).join(', ')}`);
-        console.log('分支到轨道的映射:', Array.from(branchLaneMap.entries()));
-        console.log('轨道分配结果 (按层级):');
-        for (let level = 0; level <= maxLevel; level++) {
-            const levelCommits = levelNodes.get(level) || [];
-            if (levelCommits.length > 0) {
-                console.log(`\n层级 ${level}:`);
-                levelCommits.forEach((node: any) => {
-                    const lane = nodeColumnMap.get(node.hash) || 0;
-                    const branches = node.branches?.join(', ') || '无';
-                    const msg = node.shortMessage?.substring(0, 40) || '无消息';
-                    const parents = node.parents?.length || 0;
-                    const children = childrenMap.get(node.hash)?.length || 0;
-                    const isMerge = node.isMerge ? ' [合并]' : '';
-                    console.log(`  轨道${lane}: ${node.hash.substring(0, 7)} [${branches}] 父节点:${parents} 子节点:${children}${isMerge} - ${msg}`);
-                });
-            }
-        }
-        console.log('=== 调试信息结束 ===\n');
+        // 调试信息已移除（生产环境不需要详细的轨道分配日志）
+        // 如需调试，可通过开发工具查看
 
         // 7. 设置节点位置
         nodes.forEach((node: any) => {
@@ -506,7 +488,8 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
                 setZoomLevel(100);
             }
         } catch (e) {
-            console.warn('Failed to initialize graph view:', e);
+            // 错误已通过 React 错误边界处理，这里静默失败
+            // 如需调试，可通过开发工具查看
         }
 
         // 创建箭头标记（向下，因为新提交在上，旧提交在下）
@@ -715,7 +698,7 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
     // 检查数据是否已加载
     const hasBranchGraphData = data?.branchGraph !== undefined;
     const hasDagData = data?.branchGraph?.dag !== undefined;
-    const hasNodes = data?.branchGraph?.dag?.nodes && data.branchGraph.dag.nodes.length > 0;
+    const hasNodes = data?.branchGraph?.dag?.nodes && data.branchGraph?.dag?.nodes.length > 0;
 
     // 检查是否有提交日志数据（用于判断数据是否已加载完成）
     const hasLogData = data?.log !== undefined;
@@ -778,7 +761,14 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
         }
     }
 
-    const dag = data.branchGraph.dag;
+    const dag = data.branchGraph?.dag;
+    if (!dag) {
+        return (
+            <div className="branch-graph">
+                <div className="empty-state">分支图数据未加载</div>
+            </div>
+        );
+    }
     const nodeCount = dag.nodes?.length || 0;
     const linkCount = dag.links?.length || 0;
 
@@ -1054,7 +1044,7 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
                                                 // 缩放百分比会在 zoom 事件中自动更新
                                             }
                                         } catch (e) {
-                                            console.warn('Failed to fit to window:', e);
+                                            // 适配窗口失败，静默处理
                                         }
                                     }
                                 }}
@@ -1192,7 +1182,7 @@ export const BranchGraph: React.FC<{ data: any }> = ({ data }) => {
                                                 onClick={() => {
                                                     // 查找父提交节点并选中
                                                     if (data?.branchGraph?.dag?.nodes) {
-                                                        const parentNode = data.branchGraph.dag.nodes.find((n: any) => n.hash === parent);
+                                                        const parentNode = data.branchGraph?.dag?.nodes?.find((n: any) => n.hash === parent);
                                                         if (parentNode) {
                                                             // 合并提交信息
                                                             const commitInfo = data?.log?.all?.find((c: any) => c.hash === parent);

@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import simpleGit, { SimpleGit, StatusResult, BranchSummary, LogResult } from 'simple-git';
 import { MergeHistory } from '../utils/merge-history';
+import { Logger } from '../utils/logger';
+import { ErrorHandler } from '../utils/error-handler';
+import { BranchGraphData, CommitNodeInfo, RemoteInfo, TagInfo } from '../types/git';
 
 /**
  * 缓存项接口
@@ -11,39 +14,7 @@ interface CacheItem<T> {
     ttl: number; // 缓存有效期（毫秒）
 }
 
-/**
- * 分支视图 DAG 结构
- */
-interface BranchGraphDag {
-    nodes: Array<{
-        hash: string;
-        parents: string[];
-        branches: string[];
-        timestamp: number;
-        isMerge: boolean;
-    }>;
-    links: Array<{
-        source: string;
-        target: string;
-    }>;
-}
-
-/**
- * 分支视图整体数据
- */
-export interface BranchGraphData {
-    branches: string[];
-    merges: Array<{ from: string; to: string; commit: string; type: 'three-way' | 'fast-forward'; description?: string; timestamp?: number }>;
-    currentBranch?: string;
-    dag?: BranchGraphDag;
-}
-
-interface CommitNodeInfo {
-    hash: string;
-    parents: string[];
-    timestamp: number;
-    branches: Set<string>;
-}
+// 类型定义已移至 src/types/git.ts
 
 /**
  * Git服务类 - 封装所有Git操作
@@ -68,6 +39,9 @@ export class GitService {
         log: 2000,             // 日志缓存2秒
         branchGraph: 10000,    // 分支图缓存10秒（计算成本高，延长缓存时间）
     };
+
+    // 缓存大小限制（防止内存泄漏）
+    private readonly MAX_CACHE_SIZE = 100;
 
     // 分支视图最大分析提交数，避免在超大仓库中遍历所有历史导致卡顿
     // 800 左右在大多数仓库下可以覆盖最近的分支/合并关系，同时保证加载速度
@@ -109,7 +83,7 @@ export class GitService {
 
             return this.buildBranchGraphFromCommitMap(commits, branchSummary);
         } catch (error) {
-            console.error('Error getting branch graph:', error);
+            ErrorHandler.handleSilent(error, '获取分支图');
             return {
                 branches: [],
                 merges: [],
@@ -133,22 +107,43 @@ export class GitService {
             return null;
         }
 
-        for (let i = storedHashes.length - 1; i >= 0; i--) {
+        // 优化：从最近的提交开始查找（更可能匹配）
+        // 同时限制查找次数，避免在大量历史中查找过久
+        const maxAttempts = Math.min(storedHashes.length, 10);
+        let attempts = 0;
+
+        for (let i = storedHashes.length - 1; i >= 0 && attempts < maxAttempts; i--) {
+            attempts++;
             const candidate = storedHashes[i];
             if (!candidate || candidate === headHash) {
                 continue;
             }
-            const baseGraph = this.loadBranchGraphFromStorage(repoId, candidate);
-            if (!baseGraph || !baseGraph.dag) {
+
+            try {
+                const baseGraph = this.loadBranchGraphFromStorage(repoId, candidate);
+                if (!baseGraph || !baseGraph.dag) {
+                    continue;
+                }
+
+                // 快速检查：如果候选提交的节点数已经接近限制，可能不适合作为基础
+                if (baseGraph.dag.nodes.length >= GitService.BRANCH_GRAPH_MAX_COMMITS * 0.9) {
+                    continue;
+                }
+
+                const ancestor = await this.isAncestor(git, candidate, headHash);
+                if (!ancestor) {
+                    continue;
+                }
+
+                const incremental = await this.buildBranchGraphIncrementally(git, baseGraph, candidate, headHash);
+                if (incremental) {
+                    Logger.debug(`使用增量更新构建分支图: ${candidate.substring(0, 7)} -> ${headHash.substring(0, 7)}`);
+                    return incremental;
+                }
+            } catch (error) {
+                // 单个候选失败不影响其他候选
+                ErrorHandler.handleSilent(error, `检查增量更新候选(${candidate?.substring(0, 7)})`);
                 continue;
-            }
-            const ancestor = await this.isAncestor(git, candidate, headHash);
-            if (!ancestor) {
-                continue;
-            }
-            const incremental = await this.buildBranchGraphIncrementally(git, baseGraph, candidate, headHash);
-            if (incremental) {
-                return incremental;
             }
         }
 
@@ -171,7 +166,7 @@ export class GitService {
                 '--decorate=full'
             ]);
         } catch (error) {
-            console.warn('增量获取分支图失败:', error);
+            ErrorHandler.handleSilent(error, '增量获取分支图');
             return null;
         }
 
@@ -322,7 +317,7 @@ export class GitService {
                 }
             }
         } catch (error) {
-            console.warn('读取合并历史失败:', error);
+            ErrorHandler.handleSilent(error, '读取合并历史');
         }
 
         const threeWayMerges = merges.filter(m => m.type === 'three-way');
@@ -404,8 +399,22 @@ export class GitService {
 
         const indexKey = this.getBranchGraphIndexKey(repoId);
         const existingIndex = this.storage.get<string[]>(indexKey) || [];
+
+        // 优化：限制索引大小，只保留最近的N个提交哈希
+        // 这样可以避免索引无限增长，同时保持增量更新的有效性
+        const MAX_INDEX_SIZE = 20;
+        let updatedIndex: string[];
+
         if (!existingIndex.includes(headHash)) {
-            await this.storage.update(indexKey, [...existingIndex, headHash]);
+            updatedIndex = [...existingIndex, headHash];
+            // 如果超过限制，删除最旧的
+            if (updatedIndex.length > MAX_INDEX_SIZE) {
+                const oldestHash = updatedIndex[0];
+                // 删除最旧的存储数据
+                await this.storage.update(this.getBranchGraphStorageKey(repoId, oldestHash), undefined);
+                updatedIndex = updatedIndex.slice(1);
+            }
+            await this.storage.update(indexKey, updatedIndex);
         }
     }
 
@@ -428,9 +437,16 @@ export class GitService {
     }
 
     /**
-     * 设置缓存
+     * 设置缓存（带大小限制）
      */
     private setCache<T>(key: string, data: T, ttl: number): void {
+        // 如果缓存超过限制，删除最旧的项
+        if (this.cache.size >= this.MAX_CACHE_SIZE) {
+            const oldestKey = Array.from(this.cache.keys())[0];
+            this.cache.delete(oldestKey);
+            Logger.debug(`缓存已满，删除最旧项: ${oldestKey}`);
+        }
+
         this.cache.set(key, {
             data,
             timestamp: Date.now(),
@@ -477,7 +493,7 @@ export class GitService {
 
             await this.storage.update(indexKey, []);
         } catch (error) {
-            console.warn('清空分支图缓存失败:', error);
+            ErrorHandler.handleSilent(error, '清空分支图缓存');
         }
     }
 
@@ -676,7 +692,7 @@ export class GitService {
 
             return currentCommitTrimmed === mergeBaseTrimmed;
         } catch (error) {
-            console.warn('检查快进合并失败:', error);
+            ErrorHandler.handleSilent(error, '检查快进合并');
             return null;
         }
     }
@@ -726,7 +742,7 @@ export class GitService {
                 // 如果两个分支都有对方没有的提交，说明已经分叉
                 hasDiverged = commitsAhead > 0 && commitsBehind > 0;
             } catch (error) {
-                console.warn('计算分支差异失败:', error);
+                ErrorHandler.handleSilent(error, '计算分支差异');
             }
 
             return {
@@ -736,7 +752,7 @@ export class GitService {
                 hasDiverged
             };
         } catch (error) {
-            console.warn('获取分支合并信息失败:', error);
+            ErrorHandler.handleSilent(error, '获取分支合并信息');
             return {
                 canFastForward: null,
                 commitsAhead: 0,
@@ -771,9 +787,10 @@ export class GitService {
                 // 强制创建合并提交，确保依赖图能记录
                 await git.merge([branchName, '--no-ff']);
                 await this.recordMergeHistory(branchName, targetBranch, 'three-way');
-            } catch (error: any) {
+            } catch (error: unknown) {
                 // 某些环境可能不支持 --no-ff，退回普通合并
-                if (error?.message?.includes('--no-ff')) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                if (errorMessage.includes('--no-ff')) {
                     await git.merge([branchName]);
                     await this.recordMergeHistory(branchName, targetBranch, 'three-way');
                 } else {
@@ -807,7 +824,7 @@ export class GitService {
                 description: `${type === 'fast-forward' ? '快速合并' : '三路合并'}：${fromBranch} → ${toBranch}`
             });
         } catch (error) {
-            console.warn('记录合并历史失败:', error);
+            ErrorHandler.handleSilent(error, '记录合并历史');
         }
     }
 
@@ -841,7 +858,7 @@ export class GitService {
 
             return mergedBranches.includes(branchName);
         } catch (error) {
-            console.warn('检查分支是否已合并失败:', error);
+            ErrorHandler.handleSilent(error, '检查分支是否已合并');
             // 出错时返回 false，让上层用更保守的提示逻辑
             return false;
         }
@@ -990,11 +1007,11 @@ export class GitService {
     /**
      * 获取远程仓库列表（带缓存）
      */
-    async getRemotes(forceRefresh: boolean = false): Promise<any[]> {
+    async getRemotes(forceRefresh: boolean = false): Promise<RemoteInfo[]> {
         const cacheKey = 'remotes';
 
         if (!forceRefresh) {
-            const cached = this.getCached<any[]>(cacheKey);
+            const cached = this.getCached<RemoteInfo[]>(cacheKey);
             if (cached) {
                 return cached;
             }
@@ -1002,8 +1019,16 @@ export class GitService {
 
         const git = this.ensureGit();
         const result = await git.getRemotes(true);
-        this.setCache(cacheKey, result, this.CACHE_TTL.remotes);
-        return result;
+        // 转换为 RemoteInfo 类型
+        const remotes: RemoteInfo[] = result.map((remote: { name: string; refs?: { fetch?: string; push?: string } }) => ({
+            name: remote.name,
+            refs: {
+                fetch: remote.refs?.fetch,
+                push: remote.refs?.push
+            }
+        }));
+        this.setCache(cacheKey, remotes, this.CACHE_TTL.remotes);
+        return remotes;
     }
 
     /**
@@ -1199,7 +1224,7 @@ export class GitService {
             }
         } catch (error) {
             // 如果无法获取统计，返回空Map
-            console.error('Error getting file stats:', error);
+            ErrorHandler.handleSilent(error, '获取文件统计');
         }
 
         return fileStats;
@@ -1266,7 +1291,7 @@ export class GitService {
             }
         } catch (error) {
             // 如果无法获取统计，返回空Map
-            console.error('Error getting contributor stats:', error);
+            ErrorHandler.handleSilent(error, '获取贡献者统计');
         }
 
         return contributorStats;
@@ -1377,7 +1402,7 @@ export class GitService {
             });
         } catch (error) {
             // 如果无法获取，返回空Map
-            console.error('Error getting commit timeline:', error);
+            ErrorHandler.handleSilent(error, '获取提交时间线');
         }
 
         return timeline;
@@ -1386,7 +1411,7 @@ export class GitService {
     /**
      * 获取详细的提交历史（包含文件变更信息）
      */
-    async getDetailedLog(maxCount: number = 100): Promise<any> {
+    async getDetailedLog(maxCount: number = 100): Promise<LogResult> {
         const git = this.ensureGit();
         try {
             const log = await git.log({ maxCount, '--stat': null });
@@ -1399,11 +1424,11 @@ export class GitService {
     /**
      * 获取所有标签列表（带缓存）
      */
-    async getTags(forceRefresh: boolean = false): Promise<Array<{ name: string; commit: string; message?: string; date?: string }>> {
+    async getTags(forceRefresh: boolean = false): Promise<TagInfo[]> {
         const cacheKey = 'tags';
 
         if (!forceRefresh) {
-            const cached = this.getCached<Array<{ name: string; commit: string; message?: string; date?: string }>>(cacheKey);
+            const cached = this.getCached<TagInfo[]>(cacheKey);
             if (cached) {
                 return cached;
             }
@@ -1422,7 +1447,7 @@ export class GitService {
                 return [];
             }
 
-            const tags = tagsOutput
+            const tags: TagInfo[] = tagsOutput
                 .trim()
                 .split('\n')
                 .filter(line => !!line.trim())
@@ -1430,20 +1455,25 @@ export class GitService {
                     const [name, objectName, objectType, subject, date] = line.split('|');
                     const cleanMessage = subject?.trim();
                     const isAnnotated = (objectType || '').trim() === 'tag';
+                    const tagName = name?.trim() || '';
+                    const tagCommit = (objectName || '').trim();
+                    if (!tagName || !tagCommit) {
+                        return null;
+                    }
                     return {
-                        name: name?.trim() || '',
-                        commit: (objectName || '').trim(),
+                        name: tagName,
+                        commit: tagCommit,
                         message: isAnnotated && cleanMessage ? cleanMessage : undefined,
                         date: date?.trim() || undefined
-                    };
+                    } as TagInfo;
                 })
-                .filter(tag => tag.name && tag.commit);
+                .filter((tag): tag is TagInfo => tag !== null);
 
             // 缓存结果
             this.setCache(cacheKey, tags, this.CACHE_TTL.tags);
             return tags;
         } catch (error) {
-            console.error('Error getting tags:', error);
+            ErrorHandler.handleSilent(error, '获取标签列表');
             return [];
         }
     }
@@ -1494,7 +1524,7 @@ export class GitService {
             this.setCache(cacheKey, result, this.CACHE_TTL.remoteTags);
             return result;
         } catch (error) {
-            console.error(`Error getting remote tags for ${remote}:`, error);
+            ErrorHandler.handleSilent(error, `获取远程标签(${remote})`);
             return [];
         }
     }

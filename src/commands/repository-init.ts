@@ -4,6 +4,7 @@ import { BranchProvider } from '../providers/branch-provider';
 import { HistoryProvider } from '../providers/history-provider';
 import { CommandHistory } from '../utils/command-history';
 import { DashboardPanel } from '../webview/dashboard-panel';
+import { ErrorHandler } from '../utils/error-handler';
 
 /**
  * 注册仓库初始化相关命令
@@ -90,7 +91,7 @@ export function registerRepositoryInit(
                             }
                         } catch (error) {
                             // 如果获取分支信息失败，不影响初始化流程，只记录警告
-                            console.warn('验证分支名称失败:', error);
+                            ErrorHandler.handleSilent(error, '验证分支名称');
                         }
                     }
                 );

@@ -2,6 +2,9 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { GitService } from '../services/git-service';
 import { CommandHistory } from '../utils/command-history';
+import { Logger } from '../utils/logger';
+import { ErrorHandler } from '../utils/error-handler';
+import { GitData, RemoteInfo, RepositoryInfo, BranchGraphData, GitStatus, BranchInfo, CommitInfo } from '../types/git';
 
 /**
  * Webview 消息类型
@@ -21,59 +24,7 @@ interface WebviewMessage {
     [key: string]: unknown;
 }
 
-/**
- * 远程仓库信息
- */
-interface RemoteInfo {
-    name: string;
-    refs?: {
-        fetch?: string;
-        push?: string;
-    };
-}
-
-/**
- * 提交信息
- */
-interface CommitInfo {
-    hash: string;
-    message: string;
-    author_name: string;
-    date: string;
-}
-
-/**
- * Git 状态信息
- */
-interface GitStatus {
-    modified: string[];
-    created: string[];
-    deleted: string[];
-    [key: string]: unknown;
-}
-
-/**
- * Git 分支信息
- */
-interface GitBranches {
-    all: string[];
-    current: string | null;
-    [key: string]: unknown;
-}
-
-/**
- * Git 数据
- */
-interface GitData {
-    status?: GitStatus;
-    branches?: GitBranches;
-    log?: {
-        all: CommitInfo[];
-        [key: string]: unknown;
-    };
-    remotes?: RemoteInfo[];
-    [key: string]: unknown;
-}
+// 类型定义已移至 src/types/git.ts
 
 /**
  * Git Assistant 控制面板
@@ -274,12 +225,11 @@ export class DashboardPanel {
                             }
                             break;
                         default:
-                            console.warn(`Unknown command: ${message.command}`);
+                            Logger.warn(`未知命令: ${message.command}`);
                             break;
                     }
                 } catch (error) {
-                    console.error('Error handling message:', error);
-                    vscode.window.showErrorMessage(`处理消息时出错: ${error instanceof Error ? error.message : String(error)}`);
+                    ErrorHandler.handle(error, '处理消息');
                 }
             },
             null,
@@ -883,23 +833,28 @@ export class DashboardPanel {
 
             // 先发送关键数据，让界面快速响应
             const status = statusResult.status === 'fulfilled'
-                ? statusResult.value
+                ? statusResult.value as any
                 : {
+                    current: null,
+                    tracking: null,
                     modified: [],
                     created: [],
                     deleted: [],
+                    renamed: [],
                     conflicted: [],
+                    staged: [],
                     not_added: [],
                     ahead: 0,
-                    behind: 0
+                    behind: 0,
+                    files: []
                 };
 
             const branches = branchesResult.status === 'fulfilled'
-                ? branchesResult.value
+                ? branchesResult.value as any
                 : { all: [], current: null, branches: {} };
 
             const log = logResult.status === 'fulfilled'
-                ? logResult.value
+                ? logResult.value as any
                 : { all: [], total: 0, latest: null };
 
             const remotes = remotesResult.status === 'fulfilled' ? remotesResult.value : [];
@@ -960,7 +915,7 @@ export class DashboardPanel {
                         tags
                     });
                 } catch (error) {
-                    console.warn('Error loading heavy data:', error);
+                    ErrorHandler.handleSilent(error, '加载耗时数据');
                     // 如果加载失败，检查是否是仓库不存在
                     if (!this._disposed) {
                         try {
@@ -1007,14 +962,14 @@ export class DashboardPanel {
                         }
                     });
                 }).catch(error => {
-                    console.warn('获取远程标签失败:', error);
+                    ErrorHandler.handleSilent(error, '获取远程标签');
                 });
             }
 
             // 启动后台加载
             loadHeavyData();
         } catch (error) {
-            console.error('Error sending git data:', error);
+            ErrorHandler.handleSilent(error, '发送Git数据');
             // 如果面板已经被销毁，则不再尝试发送消息
             if (this._disposed) {
                 return;
@@ -1036,7 +991,20 @@ export class DashboardPanel {
 
             // 其他错误情况，发送空数据避免一直加载
             this._sendInitialData({
-                status: { modified: [], created: [], deleted: [], conflicted: [], not_added: [], ahead: 0, behind: 0 },
+                status: {
+                    current: null,
+                    tracking: null,
+                    modified: [],
+                    created: [],
+                    deleted: [],
+                    renamed: [],
+                    conflicted: [],
+                    staged: [],
+                    not_added: [],
+                    ahead: 0,
+                    behind: 0,
+                    files: []
+                },
                 branches: { all: [], current: null, branches: {} },
                 log: { all: [], total: 0, latest: null },
                 remotes: [],
@@ -1054,16 +1022,16 @@ export class DashboardPanel {
      * 发送初始数据（关键数据，快速响应）
      */
     private _sendInitialData(data: {
-        status: any;
-        branches: any;
-        log: any;
-        remotes: any[];
+        status: any; // StatusResult 类型，需要转换
+        branches: any; // BranchSummary 类型，需要转换
+        log: any; // LogResult 类型
+        remotes: RemoteInfo[];
         currentBranch: string | null;
         conflicts: string[];
-        tags: any[];
+        tags: GitData['tags'];
         remoteTags: Array<{ name: string; commit: string }>;
-        repositoryInfo: any;
-        branchGraphSnapshot: any | null;
+        repositoryInfo: RepositoryInfo | null;
+        branchGraphSnapshot: BranchGraphData | null;
     }) {
         if (this._disposed) {
             return;
@@ -1076,7 +1044,7 @@ export class DashboardPanel {
                 fileStats: [],
                 contributorStats: [],
                 branchGraph: {
-                    branches: data.branchGraphSnapshot?.branches || data.branches.all || [],
+                    branches: data.branchGraphSnapshot?.branches || (data.branches?.all || []),
                     merges: data.branchGraphSnapshot?.merges || [],
                     currentBranch: data.branchGraphSnapshot?.currentBranch || data.currentBranch,
                     dag: data.branchGraphSnapshot?.dag || {
@@ -1123,7 +1091,7 @@ export class DashboardPanel {
                 }
             });
         } catch (error) {
-            console.warn('刷新远程仓库数据失败:', error);
+            ErrorHandler.handleSilent(error, '刷新远程仓库数据');
             // 如果快速刷新失败，回退到完整刷新
             await this._sendGitData();
         }
@@ -1578,29 +1546,11 @@ export class DashboardPanel {
 
     /**
      * 让用户选择远程仓库（多远程场景）
-     * 使用缓存数据，避免重复获取
+     * 使用公共辅助函数，消除代码重复
      */
     private async _pickRemote(actionLabel: string): Promise<string | null> {
-        // 使用缓存获取远程仓库列表，提升速度
-        const remotes = await this.gitService.getRemotes(false);
-        if (remotes.length === 0) {
-            vscode.window.showWarningMessage('当前仓库没有配置远程仓库');
-            return null;
-        }
-        if (remotes.length === 1) {
-            return remotes[0].name;
-        }
-        const selected = await vscode.window.showQuickPick(
-            remotes.map(remote => ({
-                label: `$(cloud) ${remote.name}`,
-                description: remote.refs?.fetch || remote.refs?.push || '',
-                remote: remote.name
-            })),
-            {
-                placeHolder: `选择要${actionLabel}的远程仓库`
-            }
-        );
-        return selected?.remote || null;
+        const { pickRemote } = await import('../utils/git-helpers');
+        return pickRemote(this.gitService, actionLabel);
     }
 
     private _getReactHtml(webview: vscode.Webview): string {
@@ -1641,9 +1591,21 @@ export class DashboardPanel {
 
     private _getHtmlForWebview(webview: vscode.Webview, data: GitData) {
         const { status, branches, log } = data;
-        const safeStatus: GitStatus = status || { modified: [], created: [], deleted: [] };
-        const safeBranches: GitBranches = branches || { all: [], current: null };
-        const safeLog = log || { all: [] };
+        const safeStatus: GitStatus = status || {
+            current: null,
+            tracking: null,
+            ahead: 0,
+            behind: 0,
+            modified: [],
+            created: [],
+            deleted: [],
+            renamed: [],
+            conflicted: [],
+            staged: [],
+            files: []
+        };
+        const safeBranches: BranchInfo = branches || { all: [], current: null, branches: {} };
+        const safeLog = log || { all: [], total: 0, latest: null };
 
         return `<!DOCTYPE html>
 <html lang="zh-CN">

@@ -222,7 +222,7 @@ export const GitCommandReference: React.FC = () => {
                 setCopiedCommand(null);
             }, 2000);
         } catch (error) {
-            console.error('复制失败:', error);
+            // 复制失败，静默处理（用户可以通过其他方式复制）
         }
     };
 

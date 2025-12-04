@@ -13,6 +13,7 @@ export interface GitStatus {
     renamed: string[];
     conflicted: string[];
     staged: string[];
+    not_added?: string[]; // 未跟踪的文件
     files: FileStatus[];
 }
 
@@ -23,7 +24,7 @@ export interface FileStatus {
 }
 
 export interface BranchInfo {
-    current: string;
+    current: string | null;
     all: string[];
     branches: {
         [key: string]: BranchDetail;
@@ -94,5 +95,99 @@ export interface TagInfo {
     commit: string;
     message?: string;
     date?: string;
+}
+
+/**
+ * 分支图节点信息
+ */
+export interface BranchGraphNode {
+    hash: string;
+    parents: string[];
+    branches: string[];
+    timestamp: number;
+    isMerge: boolean;
+}
+
+/**
+ * 分支图链接信息
+ */
+export interface BranchGraphLink {
+    source: string;
+    target: string;
+}
+
+/**
+ * 分支图 DAG 结构
+ */
+export interface BranchGraphDag {
+    nodes: BranchGraphNode[];
+    links: BranchGraphLink[];
+}
+
+/**
+ * 分支图数据
+ */
+export interface BranchGraphData {
+    branches: string[];
+    merges: Array<{
+        from: string;
+        to: string;
+        commit: string;
+        type: 'three-way' | 'fast-forward';
+        description?: string;
+        timestamp?: number;
+    }>;
+    currentBranch?: string;
+    dag?: BranchGraphDag;
+}
+
+/**
+ * 提交节点信息（内部使用）
+ */
+export interface CommitNodeInfo {
+    hash: string;
+    parents: string[];
+    timestamp: number;
+    branches: Set<string>;
+}
+
+/**
+ * 远程仓库信息
+ */
+export interface RemoteInfo {
+    name: string;
+    refs?: {
+        fetch?: string;
+        push?: string;
+    };
+}
+
+/**
+ * 仓库信息
+ */
+export interface RepositoryInfo {
+    path: string;
+    name: string;
+}
+
+/**
+ * Git 数据（用于 Webview）
+ */
+export interface GitData {
+    status?: GitStatus;
+    branches?: BranchInfo;
+    log?: LogResult;
+    remotes?: RemoteInfo[];
+    conflicts?: string[];
+    tags?: TagInfo[];
+    remoteTags?: Array<{ name: string; commit: string }>;
+    repositoryInfo?: RepositoryInfo;
+    branchGraph?: BranchGraphData;
+    fileStats?: Array<{ path: string; count: number }>;
+    contributorStats?: Array<{ email: string; commits: number; files: number }>;
+    timeline?: Array<{ date: string; count: number }>;
+    commandHistory?: any[];
+    availableCommands?: any[];
+    categories?: any[];
 }
 

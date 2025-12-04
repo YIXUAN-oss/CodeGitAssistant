@@ -5,6 +5,8 @@ import { HistoryProvider } from '../providers/history-provider';
 import { Logger } from '../utils/logger';
 import { CommandHistory } from '../utils/command-history';
 import { DashboardPanel } from '../webview/dashboard-panel';
+import { pickRemote, getDefaultRemote } from '../utils/git-helpers';
+import { ErrorHandler } from '../utils/error-handler';
 
 /**
  * 注册Git操作命令（Push, Pull, Clone）
@@ -19,43 +21,26 @@ export function registerGitOperations(
     // 快速推送
     context.subscriptions.push(
         vscode.commands.registerCommand('git-assistant.quickPush', async () => {
-            let selectedRemote = 'origin';
+            let selectedRemote = 'origin'; // 在外部声明，确保 catch 块可以访问
             try {
                 const config = vscode.workspace.getConfiguration('git-assistant');
                 const needConfirm = config.get('confirmPush', true);
-                const preferredRemote = (config.get<string>('defaultRemote') || '').trim();
 
-                // 检查是否有远程仓库
+                // 使用辅助函数获取远程仓库
+                const defaultRemote = await getDefaultRemote(gitService);
+                selectedRemote = defaultRemote;
+
+                // 如果有多个远程仓库，让用户选择
                 const remotes = await gitService.getRemotes();
-                if (remotes.length === 0) {
-                    vscode.window.showWarningMessage('尚未配置远程仓库，无法推送。请先添加远程仓库。');
-                    return;
-                }
-
-                if (remotes.length === 1) {
-                    selectedRemote = remotes[0].name;
-                } else if (preferredRemote && remotes.some(r => r.name === preferredRemote)) {
-                    // 如果配置了默认远程且存在，则直接使用
-                    selectedRemote = preferredRemote;
-                } else {
-                    // 如果有多个远程仓库，让用户选择
-                    const remoteItems = remotes.map(remote => ({
-                        label: `$(cloud) ${remote.name}`,
-                        description: remote.refs?.fetch || remote.refs?.push || '',
-                        remote: remote.name
-                    }));
-
-                    const selected = await vscode.window.showQuickPick(remoteItems, {
-                        placeHolder: preferredRemote
-                            ? `选择要推送到的远程仓库（当前默认：${preferredRemote}）`
-                            : '选择要推送到的远程仓库'
-                    });
-
-                    if (!selected) {
+                if (remotes.length > 1) {
+                    const picked = await pickRemote(gitService, '推送');
+                    if (!picked) {
                         return;
                     }
-
-                    selectedRemote = selected.remote;
+                    selectedRemote = picked;
+                } else if (remotes.length === 0) {
+                    vscode.window.showWarningMessage('尚未配置远程仓库，无法推送。请先添加远程仓库。');
+                    return;
                 }
 
                 // 获取当前状态
@@ -158,8 +143,7 @@ export function registerGitOperations(
 
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                Logger.error('推送失败', error instanceof Error ? error : new Error(errorMessage));
-                vscode.window.showErrorMessage(`推送失败: ${errorMessage}`);
+                ErrorHandler.handleGitError(error, '推送');
 
                 // 记录失败的命令历史
                 try {
@@ -190,42 +174,23 @@ export function registerGitOperations(
     context.subscriptions.push(
         vscode.commands.registerCommand('git-assistant.quickPull', async () => {
             let hasStashed = false;
-            let selectedRemote = 'origin';
+            let selectedRemote = 'origin'; // 在外部声明，确保 catch 块可以访问
             try {
-                const config = vscode.workspace.getConfiguration('git-assistant');
-                const preferredRemote = (config.get<string>('defaultRemote') || '').trim();
+                // 使用辅助函数获取远程仓库
+                const defaultRemote = await getDefaultRemote(gitService);
+                selectedRemote = defaultRemote;
 
-                // 检查是否有远程仓库
+                // 如果有多个远程仓库，让用户选择
                 const remotes = await gitService.getRemotes();
-                if (remotes.length === 0) {
-                    vscode.window.showWarningMessage('尚未配置远程仓库，无法拉取。请先添加远程仓库。');
-                    return;
-                }
-
-                if (remotes.length === 1) {
-                    selectedRemote = remotes[0].name;
-                } else if (preferredRemote && remotes.some(r => r.name === preferredRemote)) {
-                    // 使用配置的默认远程
-                    selectedRemote = preferredRemote;
-                } else {
-                    // 如果有多个远程仓库，让用户选择
-                    const remoteItems = remotes.map(remote => ({
-                        label: `$(cloud) ${remote.name}`,
-                        description: remote.refs?.fetch || remote.refs?.push || '',
-                        remote: remote.name
-                    }));
-
-                    const selected = await vscode.window.showQuickPick(remoteItems, {
-                        placeHolder: preferredRemote
-                            ? `选择要从哪个远程仓库拉取（当前默认：${preferredRemote}）`
-                            : '选择要从哪个远程仓库拉取'
-                    });
-
-                    if (!selected) {
+                if (remotes.length > 1) {
+                    const picked = await pickRemote(gitService, '拉取');
+                    if (!picked) {
                         return;
                     }
-
-                    selectedRemote = selected.remote;
+                    selectedRemote = picked;
+                } else if (remotes.length === 0) {
+                    vscode.window.showWarningMessage('尚未配置远程仓库，无法拉取。请先添加远程仓库。');
+                    return;
                 }
 
                 // 获取仓库状态
@@ -301,8 +266,6 @@ export function registerGitOperations(
 
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                Logger.error('拉取失败', error instanceof Error ? error : new Error(errorMessage));
-
                 // 如果拉取失败但已暂存，提示用户需要手动恢复
                 if (hasStashed) {
                     Logger.warn('拉取失败，但更改已被暂存，需要手动恢复');
@@ -311,7 +274,7 @@ export function registerGitOperations(
                         '确定'
                     );
                 }
-                vscode.window.showErrorMessage(`拉取失败: ${errorMessage}`);
+                ErrorHandler.handleGitError(error, '拉取');
 
                 // 记录失败的命令历史
                 try {

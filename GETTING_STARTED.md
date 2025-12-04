@@ -317,7 +317,7 @@ npm install -g @vscode/vsce
 # 打包扩展
 vsce package
 
-# 生成 git-assistant-0.1.0.vsix
+# 生成 git-assistant-1.0.1.vsix
 ```
 
 安装：
