@@ -1,0 +1,625 @@
+/**
+ * Git Graph 样式 - 基于 vscode-git-graph-develop
+ */
+
+/* Commit Graph */
+#commitGraph {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 2;
+    pointer-events: none;
+    overflow: visible;
+}
+
+#commitGraph circle {
+    pointer-events: all;
+    cursor: pointer;
+    transition: r 0.2s ease;
+}
+
+#commitGraph circle.current {
+    fill: var(--vscode-editor-background);
+    stroke-width: 2;
+}
+
+#commitGraph circle:not(.current) {
+    stroke: var(--vscode-editor-background);
+    stroke-width: 1;
+    stroke-opacity: 0.75;
+}
+
+#commitGraph circle.stashInner {
+    stroke-opacity: 1;
+    pointer-events: none;
+    fill: transparent;
+}
+
+#commitGraph path.shadow {
+    fill: none;
+    stroke: var(--vscode-editor-background);
+    stroke-opacity: 0.75;
+    stroke-width: 4;
+}
+
+#commitGraph path.line {
+    fill: none;
+    stroke-width: 2;
+}
+
+/* Commit Table */
+#commitTable {
+    z-index: 1;
+    position: relative;
+}
+
+#commitTable table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+#commitTable table,
+#commitTable tbody,
+#commitTable tr,
+#commitTable th,
+#commitTable td {
+    padding: 0;
+    margin: 0;
+}
+
+#commitTable th,
+#commitTable td {
+    white-space: nowrap;
+    font-size: 13px;
+    cursor: default;
+    text-overflow: ellipsis;
+    overflow: hidden;
+}
+
+#commitTable td {
+    line-height: 24px;
+    padding: 0 4px;
+}
+
+#commitTable th {
+    border-bottom: 1px solid rgba(128, 128, 128, 0.5);
+    line-height: 18px;
+    padding: 6px 12px;
+    background: var(--vscode-editor-background);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+#commitTable tr.commit td {
+    cursor: pointer;
+}
+
+#commitTable th {
+    text-align: center;
+}
+
+#commitTable td.dateCol,
+#commitTable td.authorCol,
+#commitTable td.text:last-child {
+    text-align: center;
+}
+
+#commitTable tr.commit td.text {
+    padding-left: 0;
+    padding-right: 4px;
+}
+
+#commitTable tr.commit.current span.description .text {
+    font-weight: bold;
+}
+
+#commitTable tr.commit span.description {
+    display: flex;
+    align-items: center;
+}
+
+#commitTable tr.commit .description-container {
+    align-items: center;
+    gap: 6px;
+}
+
+#commitTable tr.commit .description-refs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+#commitTable tr.commit .description-text {
+    display: inline-block;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+    flex-grow: 1;
+    min-width: 0;
+    font-size: 14px;
+    color: var(--vscode-foreground);
+}
+
+#commitTable tr.commit span.description .commitHeadDot,
+#commitTable tr.commit td span.description .gitRef {
+    flex-shrink: 0;
+}
+
+#commitTable tr.commit span.description .text {
+    display: inline-block;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+    flex-grow: 1;
+}
+
+#commitTable tr.commit.mute td.text,
+#commitTable tr.commit.mute span.description .text {
+    opacity: 0.5;
+}
+
+/* Commit Emphasis */
+.commitHeadDot {
+    width: 6px;
+    height: 6px;
+    border: 2px solid var(--vscode-textLink-foreground);
+    display: inline-block;
+    border-radius: 6px;
+    margin-right: 5px;
+    vertical-align: top;
+    margin-top: 7px;
+    cursor: help;
+}
+
+#commitTable tr.commit:hover,
+#commitTable tr.commit.contextMenuActive,
+#commitTable tr.commit.findCurrentCommit:hover,
+#commitTable tr.commit.graphVertexActive,
+#commitTable tr.commit.dialogActive {
+    background-color: rgba(128, 128, 128, 0.15);
+}
+
+#commitTable tr.commit.commitDetailsOpen {
+    background-color: rgba(128, 128, 128, 0.25);
+}
+
+/* Commit Details View (CDV) - 与 vscode-git-graph-develop 保持一致 */
+tr.commit-details {
+    position: relative;
+}
+
+#cdvContent {
+    position: absolute;
+    left: 0;
+    right: 32px;
+    top: 0;
+    bottom: 2px;
+}
+
+#cdvControls {
+    position: absolute;
+    right: 0;
+    width: 32px;
+    top: 0;
+    bottom: 2px;
+}
+
+.cdvControlBtn {
+    position: relative;
+    margin: 4px;
+    width: 24px;
+    height: 24px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.cdvControlBtn:hover {
+    background-color: rgba(128, 128, 128, 0.25);
+}
+
+.cdvControlBtn.active {
+    background-color: rgba(128, 128, 128, 0.25);
+}
+
+.cdvControlBtn.active:hover {
+    background-color: rgba(128, 128, 128, 0.35);
+}
+
+.cdvControlBtn svg {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    left: 2px;
+    top: 2px;
+    fill: var(--vscode-editor-foreground);
+    fill-opacity: 0.6;
+}
+
+.cdvControlBtn:hover svg,
+.cdvControlBtn.active svg {
+    fill-opacity: 0.75;
+}
+
+.cdvControlBtn.active:hover svg {
+    fill-opacity: 0.9;
+}
+
+#cdvSummary,
+#cdvFiles {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    box-sizing: border-box;
+    border-right: 1px solid rgba(128, 128, 128, 0.2);
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+#cdvDivider {
+    position: absolute;
+    left: 50%;
+    width: 6px;
+    cursor: col-resize;
+    top: 0;
+    bottom: 6px;
+    background: transparent;
+}
+
+#cdvDivider:hover {
+    background: rgba(128, 128, 128, 0.1);
+}
+
+#cdvSummary {
+    left: 0;
+    width: 50%;
+    padding: 10px;
+    text-overflow: ellipsis;
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+.cdvSummaryTop {
+    display: inline-table;
+    width: 100%;
+}
+
+.cdvSummaryTopRow {
+    display: table-row;
+}
+
+.cdvSummaryKeyValues,
+.cdvSummaryAvatar {
+    display: table-cell;
+    vertical-align: top;
+}
+
+.cdvSummaryKeyValues {
+    max-width: 0px;
+    overflow-x: hidden;
+    text-overflow: ellipsis;
+}
+
+.cdvSummaryTop.withAvatar .cdvSummaryKeyValues {
+    padding-right: 10px;
+}
+
+.cdvSummaryAvatar {
+    width: 54px;
+}
+
+.cdvSummaryAvatar>img {
+    width: 54px;
+    border-radius: 4px;
+}
+
+.messageContent {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+#cdvFiles {
+    left: 50%;
+    right: 0;
+    padding: 4px 8px 8px 0;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.cdvHeightResize {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    cursor: ns-resize;
+    z-index: 10;
+    border-bottom: 2px solid rgba(128, 128, 128, 0.2);
+}
+
+.cdvHeightResize:hover {
+    background: rgba(128, 128, 128, 0.1);
+}
+
+/* 内部和外部链接样式 */
+.internalUrl {
+    color: var(--vscode-textLink-foreground);
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.internalUrl:hover {
+    color: var(--vscode-textLink-activeForeground);
+}
+
+.externalUrl {
+    color: var(--vscode-textLink-foreground);
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.externalUrl:hover {
+    color: var(--vscode-textLink-activeForeground);
+}
+
+#commitTable tr.commit.commitDetailsOpen:hover,
+#commitTable tr.commit.commitDetailsOpen.contextMenuActive,
+#commitTable tr.commit.commitDetailsOpen.dialogActive,
+#commitTable tr.commit.commitDetailsOpen.graphVertexActive {
+    background-color: rgba(128, 128, 128, 0.35);
+}
+
+#commitTable tr.commit.findCurrentCommit {
+    background-image: linear-gradient(var(--vscode-textLink-foreground), var(--vscode-textLink-foreground));
+    outline: 1px solid var(--vscode-editor-findMatchHighlightBorder, transparent);
+    outline-offset: -1px;
+}
+
+#commitTable tr.commit.mute.commitDetailsOpen td.text,
+#commitTable tr.commit.mute.commitDetailsOpen span.description .text,
+#commitTable tr.commit.mute.findCurrentCommit td.text,
+#commitTable tr.commit.mute.findCurrentCommit span.description .text {
+    opacity: 1;
+}
+
+/* Ref labels */
+.gitRef {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 20px;
+    line-height: 20px;
+    margin-top: 0;
+    margin-right: 5px;
+    background-color: rgba(128, 128, 128, 0.15);
+    border-radius: 5px;
+    border: 1px solid rgba(128, 128, 128, 0.75);
+    vertical-align: top;
+    font-size: 12px;
+    cursor: default;
+    overflow: hidden;
+    padding: 0 2px 0 0;
+}
+
+.gitRef.active {
+    border-color: var(--vscode-textLink-foreground);
+}
+
+.gitRef.active .gitRefName {
+    font-weight: bold;
+}
+
+.gitRef>svg {
+    background-color: var(--vscode-textLink-foreground);
+    fill: var(--vscode-editor-background);
+    width: 14px;
+    height: 14px;
+    padding: 2px;
+    vertical-align: top;
+}
+
+.gitRefName,
+.gitRefHeadRemote {
+    display: inline-block;
+    height: 18px;
+    line-height: 18px;
+    padding: 0 5px;
+}
+
+.gitRefHeadRemote {
+    border-left: 1px solid rgba(128, 128, 128, 0.45);
+    font-style: italic;
+}
+
+#commitTable tr.commit.commitDetailsOpen:hover .gitRef,
+#commitTable tr.commit.commitDetailsOpen.contextMenuActive .gitRef,
+#commitTable tr.commit.commitDetailsOpen.dialogActive .gitRef,
+#commitTable tr.commit.commitDetailsOpen.graphVertexActive .gitRef {
+    background-color: rgba(128, 128, 128, 0.05);
+}
+
+.gitRef .contextMenuActive,
+.gitRef .dialogActive,
+.gitRef .gitRefName:hover,
+.gitRef .gitRefHeadRemote:hover {
+    background-color: rgba(128, 128, 128, 0.1);
+}
+
+.gitRefIcon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    margin-right: 2px;
+    border-radius: 4px 0 0 4px;
+}
+
+.gitRefIcon svg {
+    width: 14px;
+    height: 14px;
+    fill: var(--vscode-editor-background);
+}
+
+.gitRef.currentRef {
+    background-color: rgba(56, 139, 253, 0.12);
+}
+
+.gitRef.currentRef .gitRefIcon {
+    width: 18px;
+    height: 18px;
+    border: 2px solid currentColor;
+    border-radius: 50%;
+    background: transparent;
+}
+
+.gitRef.currentRef .gitRefIcon svg {
+    fill: currentColor;
+}
+
+.currentRefDot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border: 2px solid currentColor;
+    border-radius: 50%;
+    margin-right: 6px;
+    flex-shrink: 0;
+    vertical-align: middle;
+}
+
+.gitRef.tag {
+    background-color: rgba(147, 112, 219, 0.15);
+}
+
+.gitRef.headRef {
+    background-color: rgba(128, 128, 128, 0.08);
+}
+
+#commitTable tr.commit.mute .gitRef,
+#commitTable tr.commit.mute .gitRefIcon {
+    opacity: 1;
+}
+
+#commitTable tr.commit.mute .commitHeadDot,
+#commitTable tr.commit.mute .currentRefDot {
+    opacity: 1;
+}
+
+/* Dialog (ported from vscode-git-graph) */
+.dialog {
+    display: block;
+    position: fixed;
+    background-color: var(--vscode-menu-background);
+    color: var(--vscode-menu-foreground);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 1px solid rgba(128, 128, 128, 0.5);
+    border-radius: 5px;
+    text-align: center;
+    font-size: 13px;
+    line-height: 17px;
+    z-index: 41;
+    box-shadow: 0 0 30px 5px var(--vscode-widget-shadow);
+}
+
+.dialogContent {
+    display: block;
+    overflow-y: auto;
+    padding: 10px;
+    max-width: 360px;
+}
+
+.dialogContent>table.dialogForm {
+    display: inline-table;
+    width: 360px;
+}
+
+.dialogContent>table.dialogForm td {
+    padding-top: 8px;
+    text-align: left;
+    white-space: nowrap;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.dialog .roundedBtn {
+    display: inline-block;
+    line-height: 22px;
+    padding: 0 15px;
+    margin: 10px 6px 0 6px;
+    border-radius: 11px;
+    background-color: rgba(128, 128, 128, 0.15);
+    border: 1px solid rgba(128, 128, 128, 0.8);
+    box-shadow: 0 0 1px 1px rgba(128, 128, 128, 0.2);
+}
+
+.dialog .roundedBtn:hover {
+    background-color: rgba(128, 128, 128, 0.25);
+}
+
+.dialog.noInput #dialogAction,
+.dialog.inputInvalid #dialogAction {
+    background-color: rgba(128, 128, 128, 0.2);
+    opacity: 0.5;
+    cursor: default;
+}
+
+.dialog .messageContent {
+    display: inline-block;
+    margin-top: 10px;
+    line-height: 18px;
+    text-align: left;
+    width: 100%;
+    word-wrap: break-word;
+}
+
+.dialog svg {
+    display: inline;
+    fill: var(--vscode-menu-foreground);
+    opacity: 0.75;
+    vertical-align: sub;
+}
+
+/* Graph Column */
+.graphCol {
+    position: relative;
+    background: transparent !important;
+    width: 80px;
+    min-width: 80px;
+}
+
+/* Table Layout */
+#commitTable.autoLayout table {
+    table-layout: auto;
+}
+
+#commitTable.autoLayout td:nth-child(2),
+#commitTable.autoLayout th:nth-child(2) {
+    width: 100%;
+    max-width: 0;
+}
+
+#commitTable.autoLayout td.authorCol,
+#commitTable.autoLayout th.authorCol {
+    max-width: 124px;
+}
+
+#commitTable.autoLayout td.dateCol,
+#commitTable.autoLayout th.dateCol {
+    min-width: 180px;
+    max-width: 220px;
+}
+
+/* User Selection */
+#commitGraph,
+#commitTable th,
+#commitTable td,
+.gitRef {
+    -webkit-user-select: none;
+    user-select: none;
+}

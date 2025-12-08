@@ -1,0 +1,30 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "target": "ES2015",
+        "module": "ES2015",
+        "lib": [
+            "ES2015",
+            "DOM",
+            "DOM.Iterable"
+        ],
+        "outDir": "./media",
+        "rootDir": "./web",
+        "jsx": "preserve",
+        "moduleResolution": "node",
+        "strict": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true,
+        "sourceMap": true,
+        "declaration": false,
+        "allowSyntheticDefaultImports": true
+    },
+    "include": [
+        "web/**/*",
+        "web/globals.d.ts"
+    ],
+    "exclude": [
+        "node_modules"
+    ]
+}

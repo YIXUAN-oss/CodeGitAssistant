@@ -4,7 +4,7 @@ import { GitService } from '../services/git-service';
 import { CommandHistory } from '../utils/command-history';
 import { Logger } from '../utils/logger';
 import { ErrorHandler } from '../utils/error-handler';
-import { GitData, RemoteInfo, RepositoryInfo, BranchGraphData, GitStatus, BranchInfo, CommitInfo } from '../types/git';
+import { GitData, RemoteInfo, RepositoryInfo, BranchGraphData, BranchGraphNode, GitStatus, BranchInfo, CommitInfo } from '../types/git';
 
 /**
  * Webview 消息类型
@@ -45,6 +45,8 @@ export class DashboardPanel {
     private _refreshTimer: NodeJS.Timeout | null = null;
     private _pendingRefresh = false;
     private static readonly REFRESH_DEBOUNCE_MS = 300; // 300毫秒防抖
+    // 避免重复触发检出分支操作的标记
+    private _checkoutBranchInProgress = false;
 
     public static createOrShow(extensionUri: vscode.Uri, gitService: GitService) {
         const column = vscode.window.activeTextEditor
@@ -66,7 +68,7 @@ export class DashboardPanel {
                 enableScripts: true,
                 retainContextWhenHidden: true, // 保持上下文，避免切换时重新加载
                 localResourceRoots: [
-                    vscode.Uri.joinPath(extensionUri, 'dist', 'webview')
+                    vscode.Uri.joinPath(extensionUri, 'media')
                 ]
             }
         );
@@ -251,6 +253,11 @@ export class DashboardPanel {
                                 );
                             }
                             break;
+                        case 'checkoutCommit':
+                            if (message.commitHash && typeof message.commitHash === 'string') {
+                                await this._checkoutCommit(message.commitHash as string);
+                            }
+                            break;
                         case 'checkoutBranch':
                             if (message.branchName && typeof message.branchName === 'string') {
                                 await this._handleCheckoutBranch(message.branchName as string);
@@ -356,6 +363,13 @@ export class DashboardPanel {
                 return;
             }
 
+            // 避免同一时间重复检出导致的多次刷新
+            if (this._checkoutBranchInProgress) {
+                Logger.warn('忽略重复的分支检出请求（已有检出操作进行中）');
+                return;
+            }
+            this._checkoutBranchInProgress = true;
+
             // 获取当前分支
             const branches = await this.gitService.getBranches();
             const currentBranch = branches.current;
@@ -392,6 +406,8 @@ export class DashboardPanel {
             const errorMessage = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(`检出分支失败: ${errorMessage}`);
             await this._sendGitData();
+        } finally {
+            this._checkoutBranchInProgress = false;
         }
     }
 
@@ -986,7 +1002,7 @@ export class DashboardPanel {
         }
     }
 
-    private async _sendGitData() {
+    private async _sendGitData(forceRefreshLog: boolean = false) {
         try {
             if (this._disposed) {
                 return;
@@ -1017,7 +1033,7 @@ export class DashboardPanel {
                 this.gitService.getBranches(),
                 // 初始加载使用足够的提交数量，确保与分支图数据对齐，避免出现"无提交信息"
                 // 使用 800 个提交，与 BRANCH_GRAPH_MAX_COMMITS 保持一致
-                this.gitService.getLog(800),
+                this.gitService.getLog(800, undefined, forceRefreshLog),
                 this.gitService.getRemotes(),
                 this.gitService.getConflicts(),
                 this.gitService.getTags()
@@ -1053,6 +1069,20 @@ export class DashboardPanel {
             const currentBranch = branches.current || null;
             const conflicts = conflictsResult.status === 'fulfilled' ? conflictsResult.value : [];
             const tags = tagsResult.status === 'fulfilled' ? tagsResult.value : [];
+
+            // 先尝试读取缓存的分支图；若为空则立即构建，保证首屏有 dag / parents
+            let branchGraphSnapshot = await this.gitService.getBranchGraphSnapshot().catch(() => null);
+            if (!branchGraphSnapshot) {
+                try {
+                    branchGraphSnapshot = await this.gitService.getBranchGraph(true);
+                } catch (error) {
+                    ErrorHandler.handleSilent(error, '获取分支图（首屏）');
+                    branchGraphSnapshot = null;
+                }
+            }
+
+            // 使用分支图补全 log 的 parents，确保前端绘图数据完整
+            const enrichedLog = this._enrichLogWithParents(log, branchGraphSnapshot);
 
             // 异步加载耗时数据（分支图、统计等），不阻塞主界面
             const loadHeavyData = async () => {
@@ -1129,13 +1159,11 @@ export class DashboardPanel {
                 }
             };
 
-            const branchGraphSnapshot = await this.gitService.getBranchGraphSnapshot().catch(() => null);
-
             // 发送初始数据（尽可能带上缓存的分支图，远程标签异步加载）
             this._sendInitialData({
                 status,
                 branches,
-                log,
+                log: enrichedLog,
                 remotes,
                 currentBranch,
                 conflicts,
@@ -1217,6 +1245,53 @@ export class DashboardPanel {
     }
 
     /**
+     * 将branchGraph中的parents信息合并到log数据中
+     * 确保每个commit都有parents字段（即使是空数组），以匹配官方GitCommit接口
+     */
+    private _enrichLogWithParents(log: any, branchGraph: BranchGraphData | null): any {
+        if (!log || !log.all) {
+            return log;
+        }
+
+        try {
+            // 创建hash到node的映射（优化性能）
+            const nodeMap = new Map<string, BranchGraphNode>();
+            if (branchGraph?.dag?.nodes) {
+                const nodes = branchGraph.dag.nodes;
+                for (let i = 0; i < nodes.length; i++) {
+                    nodeMap.set(nodes[i].hash, nodes[i]);
+                }
+            }
+
+            // 为每个commit添加parents信息（确保所有commit都有parents字段）
+            const enrichedCommits = log.all.map((commit: any) => {
+                const node = nodeMap.get(commit.hash);
+                // 确保每个commit都有parents字段，即使为空数组
+                const parents = node?.parents || commit.parents || [];
+                return {
+                    ...commit,
+                    parents: Array.isArray(parents) ? parents : []
+                };
+            });
+
+            return {
+                ...log,
+                all: enrichedCommits
+            };
+        } catch (error) {
+            console.error('Error enriching log with parents:', error);
+            // 出错时至少确保每个commit都有parents字段
+            return {
+                ...log,
+                all: log.all.map((commit: any) => ({
+                    ...commit,
+                    parents: commit.parents || []
+                }))
+            };
+        }
+    }
+
+    /**
      * 发送初始数据（关键数据，快速响应）
      */
     private _sendInitialData(data: {
@@ -1235,21 +1310,27 @@ export class DashboardPanel {
             return;
         }
 
+        const branchGraph = {
+            branches: data.branchGraphSnapshot?.branches || (data.branches?.all || []),
+            merges: data.branchGraphSnapshot?.merges || [],
+            currentBranch: data.branchGraphSnapshot?.currentBranch || data.currentBranch,
+            dag: data.branchGraphSnapshot?.dag || {
+                nodes: [],
+                links: []
+            }
+        };
+
+        // 将parents信息添加到log数据中
+        const enrichedLog = this._enrichLogWithParents(data.log, data.branchGraphSnapshot);
+
         this._panel.webview.postMessage({
             type: 'gitData',
             data: {
                 ...data,
+                log: enrichedLog,
                 fileStats: [],
                 contributorStats: [],
-                branchGraph: {
-                    branches: data.branchGraphSnapshot?.branches || (data.branches?.all || []),
-                    merges: data.branchGraphSnapshot?.merges || [],
-                    currentBranch: data.branchGraphSnapshot?.currentBranch || data.currentBranch,
-                    dag: data.branchGraphSnapshot?.dag || {
-                        nodes: [],
-                        links: []
-                    }
-                },
+                branchGraph,
                 timeline: [],
                 commandHistory: CommandHistory.getHistory(20),
                 availableCommands: CommandHistory.getAvailableCommands(),
@@ -1351,9 +1432,12 @@ export class DashboardPanel {
             : [];
 
         // 如果后台刷新日志成功，使用最新日志；否则保持原有数据
-        const resolvedLog = results.logRefreshResult.status === 'fulfilled'
+        let resolvedLog = results.logRefreshResult.status === 'fulfilled'
             ? results.logRefreshResult.value
             : results.log;
+
+        // 将parents信息添加到log数据中
+        resolvedLog = this._enrichLogWithParents(resolvedLog, resolvedBranchGraph);
 
         // 获取远程标签并发送更新
         if (results.remotes.length > 0) {
@@ -1858,7 +1942,7 @@ export class DashboardPanel {
 
             await this.gitService.checkout(commitHash);
             vscode.window.showInformationMessage(`✅ 已检出提交 ${commitHash.substring(0, 8)}`);
-            await this._sendGitData();
+            await this._sendGitData(true);
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(`检出失败: ${errorMessage}`);
@@ -1948,15 +2032,28 @@ export class DashboardPanel {
 
     private _getReactHtml(webview: vscode.Webview): string {
         const scriptUri = webview.asWebviewUri(
-            vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview', 'webview.js')
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'index.js')
         );
-
+        const cssUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'styles', 'main.css')
+        );
+        const gitGraphCssUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'styles', 'git-graph.css')
+        );
+        const contextMenuCssUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'styles', 'context-menu.css')
+        );
+        const cspSource = webview.cspSource;
         return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline'; img-src ${cspSource} data: https:; font-src ${cspSource} data:;">
     <title>Git Assistant 可视化面板</title>
+    <link rel="stylesheet" href="${cssUri}">
+    <link rel="stylesheet" href="${gitGraphCssUri}">
+    <link rel="stylesheet" href="${contextMenuCssUri}">
     <style>
         body {
             margin: 0;
@@ -1969,15 +2066,47 @@ export class DashboardPanel {
             width: 100%;
             height: 100vh;
         }
+        .error-message {
+            padding: 20px;
+            color: var(--vscode-errorForeground);
+            background: var(--vscode-inputValidation-errorBackground);
+            border: 1px solid var(--vscode-inputValidation-errorBorder);
+            margin: 20px;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
-    <div id="root"></div>
+    <div id="root">
+        <div class="error-message" id="loading-message">正在加载...</div>
+    </div>
     <script>
-        const vscode = acquireVsCodeApi();
-        window.vscode = vscode;
+        // 只在未初始化时获取 VS Code API
+        if (!window.vscode) {
+            window.vscode = acquireVsCodeApi();
+        }
+        
+        // 错误处理
+        window.addEventListener('error', (event) => {
+            const root = document.getElementById('root');
+            if (root) {
+                root.innerHTML = '<div class="error-message"><h3>加载错误</h3><p>' + 
+                    (event.message || '未知错误') + '</p><p>文件: ' + (event.filename || '') + '</p><p>行号: ' + (event.lineno || '') + '</p></div>';
+            }
+            console.error('Webview error:', event);
+        });
+        
+        // 模块加载错误处理
+        window.addEventListener('unhandledrejection', (event) => {
+            const root = document.getElementById('root');
+            if (root) {
+                root.innerHTML = '<div class="error-message"><h3>模块加载错误</h3><p>' + 
+                    (event.reason?.message || String(event.reason) || '未知错误') + '</p></div>';
+            }
+            console.error('Module load error:', event.reason);
+        });
     </script>
-    <script src="${scriptUri}"></script>
+    <script type="module" src="${scriptUri}"></script>
 </body>
 </html>`;
     }
@@ -2269,7 +2398,11 @@ export class DashboardPanel {
     </div>
 
     <script>
-        const vscode = acquireVsCodeApi();
+        // 只在未初始化时获取 VS Code API
+        if (!window.vscode) {
+            window.vscode = acquireVsCodeApi();
+        }
+        const vscode = window.vscode;
 
         function push() {
             vscode.postMessage({ command: 'push' });
@@ -2511,7 +2644,11 @@ export class DashboardPanel {
     </div>
 
     <script>
-        const vscode = acquireVsCodeApi();
+        // 只在未初始化时获取 VS Code API
+        if (!window.vscode) {
+            window.vscode = acquireVsCodeApi();
+        }
+        const vscode = window.vscode;
 
         function initRepository() {
             vscode.postMessage({ command: 'initRepository' });
