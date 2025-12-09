@@ -37,9 +37,15 @@ export class App {
     }
     setupMessageListener() {
         window.addEventListener('message', (event) => {
+            var _a;
             const message = event.data;
             if (message.type === 'gitData') {
-                this.gitData = message.data;
+                // 完整刷新数据时，若未携带 commitFiles，则保留已有的文件缓存，避免已加载的文件列表丢失
+                const incoming = message.data || {};
+                if (!incoming.commitFiles && ((_a = this.gitData) === null || _a === void 0 ? void 0 : _a.commitFiles)) {
+                    incoming.commitFiles = this.gitData.commitFiles;
+                }
+                this.gitData = incoming;
                 this.isLoading = false;
                 this.render();
             }

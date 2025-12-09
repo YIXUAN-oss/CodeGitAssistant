@@ -23,6 +23,9 @@ interface WebviewMessage {
     text?: string;
     url?: string;
     commitHash?: string;
+    parentHash?: string;
+    filePath?: string;
+    state?: unknown;
     x?: number;
     y?: number;
     [key: string]: unknown;
@@ -45,6 +48,7 @@ export class DashboardPanel {
     private _refreshTimer: NodeJS.Timeout | null = null;
     private _pendingRefresh = false;
     private static readonly REFRESH_DEBOUNCE_MS = 300; // 300毫秒防抖
+    private _lastWebviewState: unknown = null;
     // 避免重复触发检出分支操作的标记
     private _checkoutBranchInProgress = false;
 
@@ -233,6 +237,33 @@ export class DashboardPanel {
                             if (message.file) {
                                 await this._openFile(message.file);
                             }
+                            break;
+                        case 'openFileAtRevision':
+                            if (message.commitHash && message.filePath) {
+                                await this._openFileAtRevision(message.commitHash as string, message.filePath as string);
+                            }
+                            break;
+                        case 'openCommitDiff':
+                            if (message.commitHash && message.filePath) {
+                                await this._openCommitDiff(
+                                    message.commitHash as string,
+                                    typeof message.parentHash === 'string' ? message.parentHash : undefined,
+                                    message.filePath as string
+                                );
+                            }
+                            break;
+                        case 'loadCommitFiles':
+                            if (message.commitHash) {
+                                await this._loadCommitFiles(message.commitHash as string);
+                            }
+                            break;
+                        case 'createPatchFromCommit':
+                            if (message.commitHash) {
+                                await this._createPatchFromCommit(message.commitHash as string);
+                            }
+                            break;
+                        case 'saveState':
+                            this._saveWebviewState(message.state);
                             break;
                         case 'copyToClipboard':
                             if (message.text) {
@@ -858,6 +889,135 @@ export class DashboardPanel {
             const errorMessage = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(`打开文件失败: ${errorMessage}`);
         }
+    }
+
+    /**
+     * 在指定提交中查看文件内容（只读）
+     */
+    /**
+     * 构造 git 虚拟文件系统的 URI
+     */
+    private _toGitUri(fileUri: vscode.Uri, ref: string): vscode.Uri {
+        // Git 虚拟文件系统要求 path 保持文件的绝对路径（POSIX 分隔符），query 中提供 ref
+        const absPath = fileUri.fsPath.replace(/\\/g, '/');
+        const query = JSON.stringify({ path: absPath, ref });
+        return fileUri.with({ scheme: 'git', query });
+    }
+
+    private async _openFileAtRevision(commitHash: string, filePath: string) {
+        try {
+            const workspaceRoot = this.gitService.getWorkspaceRoot();
+            if (!workspaceRoot) {
+                vscode.window.showErrorMessage('无法获取工作区根目录');
+                return;
+            }
+
+            const fileUri = vscode.Uri.file(path.join(workspaceRoot, filePath));
+            const targetUri = this._toGitUri(fileUri, commitHash);
+            const document = await vscode.workspace.openTextDocument(targetUri);
+            await vscode.window.showTextDocument(document, { preview: true });
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(`无法打开指定提交的文件: ${errorMessage}`);
+        }
+    }
+
+    /**
+     * 打开提交文件差异视图
+     */
+    private async _openCommitDiff(commitHash: string, parentHash: string | undefined, filePath: string) {
+        try {
+            const workspaceRoot = this.gitService.getWorkspaceRoot();
+            if (!workspaceRoot) {
+                vscode.window.showErrorMessage('无法获取工作区根目录');
+                return;
+            }
+
+            const fileUri = vscode.Uri.file(path.join(workspaceRoot, filePath));
+            const fromRef = parentHash?.trim();
+
+            // 检查是否是新增文件（前端会发送 'EMPTY' 标记）
+            const isAdded = fromRef === 'EMPTY';
+
+            let leftUri: vscode.Uri;
+            let title: string;
+
+            const rightUri = this._toGitUri(fileUri, commitHash);
+
+            if (isAdded) {
+                // 对于新增的文件，左侧是一个代表空内容的 untitled 文件
+                // 使用 path.sep 确保跨平台兼容性
+                const untitledPath = path.join(workspaceRoot, filePath);
+                leftUri = vscode.Uri.parse(`untitled:${untitledPath}`);
+                title = `${path.basename(filePath)} (Added in ${commitHash.slice(0, 7)})`;
+            } else {
+                // 对于修改或删除的文件，左侧是父提交中的版本
+                leftUri = this._toGitUri(fileUri, fromRef!);
+                title = `${path.basename(filePath)} (${fromRef!} ↔ ${commitHash.slice(0, 7)})`;
+            }
+
+            await vscode.commands.executeCommand('vscode.diff', leftUri, rightUri, title);
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(`无法打开差异视图: ${errorMessage}`);
+        }
+    }
+
+    /**
+     * 加载提交文件列表并推送给 Webview
+     */
+    private async _loadCommitFiles(commitHash: string) {
+        try {
+            const files = await this.gitService.getCommitFiles(commitHash);
+            if (this._disposed) {
+                return;
+            }
+            this._panel.webview.postMessage({
+                type: 'gitDataUpdate',
+                data: {
+                    commitFiles: {
+                        [commitHash]: files
+                    }
+                }
+            });
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(`加载提交文件列表失败: ${errorMessage}`);
+            if (!this._disposed) {
+                this._panel.webview.postMessage({
+                    type: 'gitDataUpdate',
+                    data: {
+                        commitFiles: {
+                            [commitHash]: []
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    /**
+     * 生成指定提交的补丁并打开
+     */
+    private async _createPatchFromCommit(commitHash: string) {
+        try {
+            const patch = await this.gitService.createPatchFromCommit(commitHash);
+            const document = await vscode.workspace.openTextDocument({
+                language: 'diff',
+                content: patch
+            });
+            await vscode.window.showTextDocument(document, { preview: true });
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(`生成补丁失败: ${errorMessage}`);
+        }
+    }
+
+    /**
+     * 存储 Webview 状态（当前用于与前端保持协议）
+     */
+    private _saveWebviewState(state: unknown) {
+        this._lastWebviewState = state;
     }
 
     /**

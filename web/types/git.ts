@@ -38,6 +38,14 @@ export interface BranchDetail {
     label: string;
 }
 
+export interface CommitFileChange {
+    path: string;
+    status: string;
+    additions?: number;
+    deletions?: number;
+    changes?: number;
+}
+
 export interface CommitInfo {
     hash: string;
     date: string;
@@ -165,5 +173,6 @@ export interface GitData {
     availableCommands?: Command[];
     categories?: Category[];
     currentBranch?: string | null;
+    commitFiles?: Record<string, CommitFileChange[]>;
 }
 

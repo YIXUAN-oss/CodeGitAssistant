@@ -38,6 +38,14 @@ export interface BranchDetail {
     label: string;
 }
 
+export interface CommitFileChange {
+    path: string;
+    status: string;
+    additions?: number;
+    deletions?: number;
+    changes?: number;
+}
+
 export interface CommitInfo {
     hash: string;
     date: string;
@@ -170,6 +178,32 @@ export interface RepositoryInfo {
     name: string;
 }
 
+export interface CommandHistoryItem {
+    id: string;
+    command: string;
+    commandName: string;
+    timestamp: number;
+    success: boolean;
+    error?: string;
+    remote?: string;
+}
+
+export interface Command {
+    id: string;
+    name: string;
+    description: string;
+    icon: string;
+    category: string;
+    requires: string;
+}
+
+export interface Category {
+    id: string;
+    name: string;
+    description: string;
+    icon: string;
+}
+
 /**
  * Git 数据（用于 Webview）
  */
@@ -186,8 +220,10 @@ export interface GitData {
     fileStats?: Array<{ path: string; count: number }>;
     contributorStats?: Array<{ email: string; commits: number; files: number }>;
     timeline?: Array<{ date: string; count: number }>;
-    commandHistory?: any[];
-    availableCommands?: any[];
-    categories?: any[];
+    commandHistory?: CommandHistoryItem[];
+    availableCommands?: Command[];
+    categories?: Category[];
+    currentBranch?: string | null;
+    commitFiles?: Record<string, CommitFileChange[]>;
 }
 

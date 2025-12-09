@@ -3,7 +3,7 @@ import simpleGit, { SimpleGit, StatusResult, BranchSummary, LogResult } from 'si
 import { MergeHistory } from '../utils/merge-history';
 import { Logger } from '../utils/logger';
 import { ErrorHandler } from '../utils/error-handler';
-import { BranchGraphData, CommitNodeInfo, RemoteInfo, TagInfo } from '../types/git';
+import { BranchGraphData, CommitFileChange, CommitNodeInfo, RemoteInfo, TagInfo } from '../types/git';
 
 /**
  * 缓存项接口
@@ -1021,6 +1021,106 @@ export class GitService {
             return await git.diff([file]);
         }
         return await git.diff();
+    }
+
+    /**
+     * 获取提交的文件变更列表（包含增删统计）
+     */
+    async getCommitFiles(commitHash: string): Promise<CommitFileChange[]> {
+        if (!commitHash) {
+            return [];
+        }
+
+        const git = this.ensureGit();
+
+        try {
+            const [statusOutput, statsOutput] = await Promise.all([
+                git.raw(['show', '--name-status', '--format=', commitHash]),
+                git.raw(['show', '--numstat', '--format=', commitHash])
+            ]);
+
+            const statusMap = new Map<string, string>();
+            statusOutput.split('\n').forEach(line => {
+                const trimmed = line.trim();
+                if (!trimmed) {
+                    return;
+                }
+                const parts = trimmed.split('\t').filter(Boolean);
+                if (parts.length === 0) {
+                    return;
+                }
+                const status = parts[0];
+                const path = parts.length > 2 && status.startsWith('R')
+                    ? parts[2]
+                    : parts[1] || '';
+                if (path) {
+                    statusMap.set(path.replace(/\\/g, '/'), status);
+                }
+            });
+
+            const statsMap = new Map<string, { additions?: number; deletions?: number }>();
+            statsOutput.split('\n').forEach(line => {
+                const trimmed = line.trim();
+                if (!trimmed) {
+                    return;
+                }
+                const parts = trimmed.split('\t');
+                if (parts.length < 3) {
+                    return;
+                }
+                const add = parseInt(parts[0], 10);
+                const del = parseInt(parts[1], 10);
+                let path = parts.slice(2).join('\t').trim();
+                if (path.includes(' => ')) {
+                    path = path.split(' => ').pop() || path;
+                }
+                path = path.replace(/\"/g, '').replace(/\\/g, '/');
+                statsMap.set(path, {
+                    additions: isNaN(add) ? undefined : add,
+                    deletions: isNaN(del) ? undefined : del
+                });
+            });
+
+            const allPaths = new Set<string>([...statusMap.keys(), ...statsMap.keys()]);
+            const files: CommitFileChange[] = [];
+            allPaths.forEach(p => {
+                if (!p) return;
+                const stats = statsMap.get(p);
+                const additions = stats?.additions;
+                const deletions = stats?.deletions;
+                files.push({
+                    path: p,
+                    status: statusMap.get(p) || 'M',
+                    additions,
+                    deletions,
+                    changes: typeof additions === 'number' && typeof deletions === 'number'
+                        ? additions + deletions
+                        : undefined
+                });
+            });
+
+            return files.sort((a, b) => a.path.localeCompare(b.path));
+        } catch (error) {
+            ErrorHandler.handleSilent(error, '获取提交文件列表');
+            return [];
+        }
+    }
+
+    /**
+     * 为指定提交生成补丁文本（格式同 git format-patch）
+     */
+    async createPatchFromCommit(commitHash: string): Promise<string> {
+        if (!commitHash) {
+            throw new Error('提交哈希不能为空');
+        }
+
+        const git = this.ensureGit();
+        try {
+            return await git.raw(['format-patch', '-1', commitHash, '--stdout']);
+        } catch (error) {
+            ErrorHandler.handle(error, '生成提交补丁');
+            throw error;
+        }
     }
 
     /**
