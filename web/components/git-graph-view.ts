@@ -325,6 +325,7 @@ export class GitGraphViewComponent {
     private selectedCommit: string | null = null;
     private expandedCommit: string | null = null;
     private detailHeight: number = 0;
+    private scrollAnchor: { hash: string; offset: number; scrollTop: number } | null = null;
 
     // DOM 引用
     private containerRef: HTMLElement | null = null;
@@ -470,6 +471,20 @@ export class GitGraphViewComponent {
         try {
             this.data = data;
 
+            // 在渲染前记录当前展开行的锚点（相对当前容器的位置）
+            if (this.expandedCommit && this.containerRef) {
+                const anchorRow = this.container.querySelector(`tr[data-commit-hash="${this.expandedCommit}"]`) as HTMLElement | null;
+                if (anchorRow) {
+                    const rowRect = anchorRow.getBoundingClientRect();
+                    const containerRect = this.containerRef.getBoundingClientRect();
+                    this.scrollAnchor = {
+                        hash: this.expandedCommit,
+                        offset: rowRect.top - containerRect.top,
+                        scrollTop: this.containerRef.scrollTop
+                    };
+                }
+            }
+
             // 更新数据引用
             const commitsChanged = data?.log?.all !== this.commitsRef;
             const dagChanged = data?.branchGraph?.dag !== this.dagRef;
@@ -513,8 +528,22 @@ export class GitGraphViewComponent {
             this.headerRef = this.container.querySelector('thead') as HTMLElement;
             this.graphSvgRef = this.container.querySelector('#commitGraph') as SVGElement;
 
-            // 首次渲染后恢复滚动位置，避免刷新时收起行
-            if (this.containerRef && this.persistedStateLoaded && this.scrollTop > 0) {
+            // 滚动恢复逻辑
+            if (this.scrollAnchor && this.expandedCommit === this.scrollAnchor.hash && this.containerRef) {
+                // 如果有滚动锚点，并且是针对当前展开的行
+                const anchorRow = this.container.querySelector(`tr[data-commit-hash="${this.scrollAnchor.hash}"]`) as HTMLElement;
+                if (anchorRow) {
+                    // 使用当前位置的差值来调整 scrollTop，避免 offsetParent 差异带来的偏移
+                    const containerRect = this.containerRef.getBoundingClientRect();
+                    const anchorRect = anchorRow.getBoundingClientRect();
+                    const delta = (anchorRect.top - containerRect.top) - this.scrollAnchor.offset;
+                    const newScrollTop = this.scrollAnchor.scrollTop + delta;
+                    this.containerRef.scrollTop = newScrollTop;
+                    this.scrollTop = newScrollTop; // 更新保存的 scrollTop
+                }
+                this.scrollAnchor = null; // 使用后清除锚点
+            } else if (this.containerRef && this.persistedStateLoaded && this.scrollTop > 0) {
+                // 否则，使用旧的恢复逻辑
                 this.containerRef.scrollTop = this.scrollTop;
             }
 
@@ -1008,18 +1037,9 @@ export class GitGraphViewComponent {
      * 获取可见范围（虚拟滚动）- 基于给定的 scrollTop
      * 用于在滚动事件中计算新的可见范围，不需要更新状态
      */
-    private getVisibleRangeForScroll(scrollTop: number): { start: number; end: number } {
-        const viewportHeight = this.containerRef?.clientHeight || this.containerHeight || 600;
-        const start = Math.max(Math.floor(scrollTop / ROW_HEIGHT) - VISIBLE_BUFFER, 0);
-
-        // 考虑展开行额外高度，避免切割
-        const expandedGap = this.expandedCommit ? Math.max(this.detailHeight || ROW_HEIGHT, ROW_HEIGHT) : 0;
-        const end = Math.min(
-            this.commitNodes.length,
-            Math.ceil((scrollTop + viewportHeight + expandedGap) / ROW_HEIGHT) + VISIBLE_BUFFER
-        );
-
-        return { start, end };
+    private getVisibleRangeForScroll(_scrollTop: number): { start: number; end: number } {
+        // 关闭虚拟滚动，始终渲染所有提交，避免切换视图后部分行不显示的问题
+        return { start: 0, end: this.commitNodes.length };
     }
 
     /**
@@ -1768,12 +1788,25 @@ export class GitGraphViewComponent {
             this.expandedCommit = null;
             this.detailHeight = 0;
             this.detailCellRef = null;
+            this.scrollAnchor = null; // 清除锚点
             setTimeout(() => {
                 this.selectedCommit = null;
                 this.render(this.data);
             }, 0);
         } else {
-            // 展开新的详情（如果是切换到另一个提交，先清理旧的状态）
+            // 展开新的详情
+            const commitRow = this.container.querySelector(`tr[data-commit-hash="${hash}"]`);
+            if (commitRow && this.containerRef) {
+                // 记录滚动锚点：被点击的行以及它相对于视口顶部的距离
+                const rowRect = commitRow.getBoundingClientRect();
+                const containerRect = this.containerRef.getBoundingClientRect();
+                this.scrollAnchor = {
+                    hash: hash,
+                    offset: rowRect.top - containerRect.top,
+                    scrollTop: this.containerRef.scrollTop
+                };
+            }
+
             if (this.expandedCommit) {
                 this.detailHeight = 0;
                 this.detailCellRef = null;

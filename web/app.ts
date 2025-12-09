@@ -23,6 +23,7 @@ export class App {
     private activeTab: TabType = 'commands';
     private isLoading: boolean = true;
     private rootElement: HTMLElement | null = null;
+    private gitGraphViewComponent: GitGraphViewComponent | null = null;
 
     constructor() {
         // 从持久化状态中恢复上次的标签页
@@ -66,7 +67,12 @@ export class App {
                         ...message.data
                     };
                 }
-                this.render();
+                // 对于 git-graph 视图，避免重建整个页面导致滚动丢失，直接局部更新
+                if (this.activeTab === 'git-graph' && this.gitGraphViewComponent) {
+                    this.gitGraphViewComponent.render(this.gitData);
+                } else {
+                    this.render();
+                }
             }
         });
     }
@@ -79,6 +85,11 @@ export class App {
 
     private render() {
         if (!this.rootElement) return;
+
+        // 切换到非 git-graph 页签时清理实例，避免持有旧引用
+        if (this.activeTab !== 'git-graph') {
+            this.gitGraphViewComponent = null;
+        }
 
         this.rootElement.innerHTML = this.getHtml();
         this.attachEventListeners();
@@ -284,8 +295,10 @@ export class App {
         if (this.activeTab === 'git-graph') {
             const container = document.getElementById('git-graph-view-container');
             if (container) {
-                const component = new GitGraphViewComponent('git-graph-view-container');
-                component.render(this.gitData);
+                if (!this.gitGraphViewComponent) {
+                    this.gitGraphViewComponent = new GitGraphViewComponent('git-graph-view-container');
+                }
+                this.gitGraphViewComponent.render(this.gitData);
             }
         }
 

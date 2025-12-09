@@ -377,7 +377,9 @@ class Vertex {
         }
         circle.setAttribute('cx', cx);
         circle.setAttribute('cy', cy);
-        circle.setAttribute('r', '4');
+        // 合并节点稍大一点，便于辨识
+        const baseRadius = this.isMerge() ? 5 : 4;
+        circle.setAttribute('r', baseRadius.toString());
         if (this.isCurrent) {
             circle.setAttribute('class', 'current');
             circle.setAttribute('stroke', colour);
@@ -461,6 +463,7 @@ export class GitGraphRenderer {
         this.vertices = [];
         this.branches = [];
         this.availableColours = [];
+        this.commitLookup = {}; // 清空旧索引，防止上一次渲染的映射污染本次
 
         if (commits.length === 0) return;
 

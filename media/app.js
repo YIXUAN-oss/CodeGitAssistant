@@ -19,6 +19,7 @@ export class App {
         this.activeTab = 'commands';
         this.isLoading = true;
         this.rootElement = null;
+        this.gitGraphViewComponent = null;
         // 从持久化状态中恢复上次的标签页
         const savedState = (_a = window.vscode) === null || _a === void 0 ? void 0 : _a.getState();
         if (savedState === null || savedState === void 0 ? void 0 : savedState.activeTab) {
@@ -57,7 +58,13 @@ export class App {
                 else {
                     this.gitData = Object.assign(Object.assign({}, this.gitData), message.data);
                 }
-                this.render();
+                // 对于 git-graph 视图，避免重建整个页面导致滚动丢失，直接局部更新
+                if (this.activeTab === 'git-graph' && this.gitGraphViewComponent) {
+                    this.gitGraphViewComponent.render(this.gitData);
+                }
+                else {
+                    this.render();
+                }
             }
         });
     }
@@ -69,6 +76,10 @@ export class App {
     render() {
         if (!this.rootElement)
             return;
+        // 切换到非 git-graph 页签时清理实例，避免持有旧引用
+        if (this.activeTab !== 'git-graph') {
+            this.gitGraphViewComponent = null;
+        }
         this.rootElement.innerHTML = this.getHtml();
         this.attachEventListeners();
     }
@@ -252,8 +263,10 @@ export class App {
         if (this.activeTab === 'git-graph') {
             const container = document.getElementById('git-graph-view-container');
             if (container) {
-                const component = new GitGraphViewComponent('git-graph-view-container');
-                component.render(this.gitData);
+                if (!this.gitGraphViewComponent) {
+                    this.gitGraphViewComponent = new GitGraphViewComponent('git-graph-view-container');
+                }
+                this.gitGraphViewComponent.render(this.gitData);
             }
         }
         // 时间线视图组件
