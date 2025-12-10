@@ -1446,7 +1446,11 @@ export class GitGraphViewComponent {
                     if (ref.startsWith('tag:')) {
                         tags.add(ref.replace(/^tag:\s*/, ''));
                     } else if (ref.startsWith('HEAD ->')) {
-                        head = ref.replace(/^HEAD\s*->\s*/, '');
+                        const headBranch = ref.replace(/^HEAD\s*->\s*/, '');
+                        head = headBranch;
+                        if (headBranch) {
+                            branches.add(headBranch);
+                        }
                     } else if (ref === 'HEAD') {
                         head = 'HEAD';
                     } else {
@@ -1518,9 +1522,9 @@ export class GitGraphViewComponent {
         const displayName = isRemote ? rest.join('/') || remoteTrimmed : branch;
         const branchColor = BRANCH_COLORS[colorIndex % BRANCH_COLORS.length];
         const isMainBranch = displayName === 'main' || displayName.endsWith('/main');
-        const borderColor = isBranchCurrent
-            ? (isMainBranch ? 'rgba(128, 128, 128, 0.75)' : branchColor)
-            : 'rgba(128, 128, 128, 0.75)';
+        const borderColor = isMainBranch
+            ? '#6b6b6b'
+            : (isBranchCurrent ? branchColor : 'rgba(128, 128, 128, 0.75)');
         const textColor = isBranchCurrent
             ? (isMainBranch ? 'var(--vscode-foreground)' : branchColor)
             : 'var(--vscode-foreground)';
@@ -1577,7 +1581,7 @@ export class GitGraphViewComponent {
     private renderTagLabel(tag: string, colorIndex: number): string {
         const branchColor = BRANCH_COLORS[colorIndex % BRANCH_COLORS.length];
         return `
-            <span class="gitRef tag" data-name="${escapeHtml(tag)}" style="border-color: ${branchColor}; color: ${branchColor};">
+            <span class="gitRef tag" data-name="${escapeHtml(tag)}" style="border-color: rgba(128, 128, 128, 0.75); color: var(--vscode-foreground);">
                 <span class="gitRefIcon" aria-hidden="true" style="background-color: ${branchColor};">
                     ${SVG_ICONS.tag}
                 </span>
@@ -1951,14 +1955,30 @@ export class GitGraphViewComponent {
                     title: '创建新分支',
                     visible: true,
                     onClick: () => {
-                        this.showCreateBranchDialog(hash);
+                        // 在扩展侧通过命令面板输入新分支名称
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const vscode = (window as any).vscode;
+                        if (vscode) {
+                            vscode.postMessage({
+                                command: 'createBranchFromCommit',
+                                commitHash: hash
+                            });
+                        }
                     }
                 },
                 {
                     title: '创建新标签',
                     visible: true,
                     onClick: () => {
-                        this.showCreateTagDialog(hash);
+                        // 在扩展侧通过命令面板输入新标签名称
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const vscode = (window as any).vscode;
+                        if (vscode) {
+                            vscode.postMessage({
+                                command: 'createTagFromCommit',
+                                commitHash: hash
+                            });
+                        }
                     }
                 },
                 {
@@ -2567,12 +2587,23 @@ export class GitGraphViewComponent {
         const vscode = (window as any).vscode;
         if (!vscode) return;
 
+        const MAX_BATCH = 120; // 单次最多请求的提交详情数量
+
+        // 仅对当前可见范围附近的提交请求详情，降低大仓库下的开销
+        const visibleRange = this.getVisibleRange();
+        const start = Math.max(0, visibleRange.start - VISIBLE_BUFFER);
+        const end = Math.min(this.commitNodes.length, visibleRange.end + VISIBLE_BUFFER);
+
         const missing: string[] = [];
-        for (const node of this.commitNodes) {
+        for (let i = start; i < end; i++) {
+            const node = this.commitNodes[i];
             const info = this.commitInfoMap.get(node.hash);
             if (this.needsCommitDetails(node.hash, info) && !this.commitDetailsRequested.has(node.hash)) {
                 this.commitDetailsRequested.add(node.hash);
                 missing.push(node.hash);
+                if (missing.length >= MAX_BATCH) {
+                    break;
+                }
             }
         }
 

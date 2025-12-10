@@ -27,6 +27,9 @@ export class GitService {
     // 缓存存储（内存级）
     private cache: Map<string, CacheItem<unknown>> = new Map();
 
+    // 记录获取详情时已失败的提交，避免重复打 git 命令
+    private failedCommitDetails: Set<string> = new Set();
+
     // 持久化存储（workspace 级）
     private storage: vscode.Memento | null = null;
 
@@ -39,6 +42,9 @@ export class GitService {
         remoteTags: 10000,     // 远程标签缓存10秒（网络操作，缓存时间更长）
         log: 2000,             // 日志缓存2秒
         branchGraph: 10000,    // 分支图缓存10秒（计算成本高，延长缓存时间）
+        fileStats: 30000,      // 文件热力图统计缓存30秒
+        contributorStats: 30000, // 贡献者统计缓存30秒
+        timeline: 30000        // 提交时间线缓存30秒
     };
 
     // 缓存大小限制（防止内存泄漏）
@@ -1033,6 +1039,9 @@ export class GitService {
 
         for (const hash of hashes) {
             if (!hash) continue;
+            if (this.failedCommitDetails.has(hash)) {
+                continue;
+            }
             try {
                 const show = await git.raw([
                     'log',
@@ -1058,6 +1067,7 @@ export class GitService {
                     branches: []
                 };
             } catch (error) {
+                this.failedCommitDetails.add(hash);
                 ErrorHandler.handleSilent(error, `获取提交详情失败: ${hash.substring(0, 8)}`);
                 continue;
             }
@@ -1303,6 +1313,12 @@ export class GitService {
      * 获取文件修改统计（用于热力图）
      */
     async getFileStats(days: number = 365): Promise<Map<string, number>> {
+        const cacheKey = `fileStats:${days}`;
+        const cached = this.getCached<Map<string, number>>(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
         const git = this.ensureGit();
         const fileStats = new Map<string, number>();
         const since = new Date();
@@ -1389,6 +1405,7 @@ export class GitService {
             ErrorHandler.handleSilent(error, '获取文件统计');
         }
 
+        this.setCache(cacheKey, fileStats, this.CACHE_TTL.fileStats);
         return fileStats;
     }
 
@@ -1396,6 +1413,12 @@ export class GitService {
      * 获取贡献者活跃度统计
      */
     async getContributorStats(days: number = 365): Promise<Map<string, { commits: number; files: Set<string> }>> {
+        const cacheKey = `contributorStats:${days}`;
+        const cached = this.getCached<Map<string, { commits: number; files: Set<string> }>>(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
         const git = this.ensureGit();
         const contributorStats = new Map<string, { commits: number; files: Set<string> }>();
         const since = new Date();
@@ -1456,6 +1479,7 @@ export class GitService {
             ErrorHandler.handleSilent(error, '获取贡献者统计');
         }
 
+        this.setCache(cacheKey, contributorStats, this.CACHE_TTL.contributorStats);
         return contributorStats;
     }
 
@@ -1534,39 +1558,41 @@ export class GitService {
      * 获取按日期分组的提交统计（用于时间线）
      */
     async getCommitTimeline(days: number = 365): Promise<Map<string, number>> {
+        const cacheKey = `timeline:${days}`;
+        const cached = this.getCached<Map<string, number>>(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
         const git = this.ensureGit();
         const timeline = new Map<string, number>();
 
         try {
-            // 获取所有提交，不限制日期范围，确保包含今天的提交
-            // 使用更大的 maxCount 以确保获取足够的历史记录
-            const log = await git.log({
-                maxCount: 10000
-            });
+            // 计算起始日期（days 天前），交给 git 进行过滤，避免在 JS 中遍历过多历史
+            const since = new Date();
+            since.setDate(since.getDate() - days);
+            since.setHours(0, 0, 0, 0);
 
-            // 计算截止日期（days 天前）
-            const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - days);
-            cutoffDate.setHours(0, 0, 0, 0); // 设置为当天的开始时间
+            const log = await git.log({
+                '--since': since.toISOString(),
+                maxCount: 5000
+            });
 
             log.all.forEach(commit => {
                 const commitDate = new Date(commit.date);
-                // 只统计在日期范围内的提交
-                if (commitDate >= cutoffDate) {
-                    // 使用本地时区格式化日期，确保今天的提交能被正确识别
-                    const year = commitDate.getFullYear();
-                    const month = String(commitDate.getMonth() + 1).padStart(2, '0');
-                    const day = String(commitDate.getDate()).padStart(2, '0');
-                    const dateKey = `${year}-${month}-${day}`;
-                    const count = timeline.get(dateKey) || 0;
-                    timeline.set(dateKey, count + 1);
-                }
+                const year = commitDate.getFullYear();
+                const month = String(commitDate.getMonth() + 1).padStart(2, '0');
+                const day = String(commitDate.getDate()).padStart(2, '0');
+                const dateKey = `${year}-${month}-${day}`;
+                const count = timeline.get(dateKey) || 0;
+                timeline.set(dateKey, count + 1);
             });
         } catch (error) {
             // 如果无法获取，返回空Map
             ErrorHandler.handleSilent(error, '获取提交时间线');
         }
 
+        this.setCache(cacheKey, timeline, this.CACHE_TTL.timeline);
         return timeline;
     }
 

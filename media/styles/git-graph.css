@@ -490,7 +490,7 @@ tr.commit-details {
 }
 
 .gitRef.tag {
-    background-color: rgba(147, 112, 219, 0.15);
+    background-color: rgba(128, 128, 128, 0.15);
 }
 
 .gitRef.headRef {
@@ -628,12 +628,5 @@ tr.commit-details {
     opacity: 1 !important;
 }
 
-/* Unify all branch label borders to a standard color, overriding specific branch colors like for 'main' */
-.branch-label {
-    border-color: rgba(128, 128, 128, 0.75) !important;
-}
-
-/* Maintain the active branch's border color for visual distinction */
-.branch-label.active {
-    border-color: var(--vscode-textLink-foreground) !important;
-}
+/* 分支标签的具体边框颜色由渲染逻辑通过行内样式控制（包括 main 分支等），
+   这里不再强制统一覆盖，避免与 GitGraphViewComponent 中的样式冲突。 */

@@ -391,7 +391,27 @@ export class HeatmapAnalysisComponent {
                 const tab = (e.currentTarget as HTMLElement).dataset.tab as 'files' | 'contributors';
                 if (tab) {
                     this.activeTab = tab;
-                    this.render(this.data);
+
+                    this.container.querySelectorAll('.heatmap-tab-btn').forEach(button => {
+                        const buttonEl = button as HTMLElement;
+                        const buttonTab = buttonEl.dataset.tab as 'files' | 'contributors' | undefined;
+                        if (buttonTab === this.activeTab) {
+                            buttonEl.classList.add('active');
+                        } else {
+                            buttonEl.classList.remove('active');
+                        }
+                    });
+
+                    const contentContainer = this.container.querySelector('.heatmap-content-container') as HTMLElement | null;
+                    if (contentContainer) {
+                        if (this.activeTab === 'files') {
+                            contentContainer.innerHTML = '<svg id="file-heatmap" class="file-heatmap-svg"></svg>';
+                        } else {
+                            contentContainer.innerHTML = '<div id="contributor-heatmap" class="contributor-heatmap"></div>';
+                        }
+                    }
+
+                    this.renderContent();
                 }
             });
         });

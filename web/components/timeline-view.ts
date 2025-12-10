@@ -45,6 +45,7 @@ export class TimelineViewComponent {
     private data: GitData | null = null;
     private selectedYear: number = new Date().getFullYear();
     private selectedMonth: number = new Date().getMonth() + 1;
+    private timelineArrayCache: TimelineData[] | null = null;
 
     constructor(containerId: string) {
         const container = document.getElementById(containerId);
@@ -56,6 +57,7 @@ export class TimelineViewComponent {
 
     render(data: GitData | null) {
         this.data = data;
+        this.buildTimelineCaches();
         this.container.innerHTML = this.getHtml();
         this.attachEventListeners();
 
@@ -88,6 +90,20 @@ export class TimelineViewComponent {
                 ${this.getCalendarHtml()}
             </div>
         `;
+    }
+
+    private buildTimelineCaches() {
+        const timeline = this.data?.timeline;
+        if (!timeline) {
+            this.timelineArrayCache = null;
+            return;
+        }
+
+        const timelineArray: TimelineData[] = Array.isArray(timeline)
+            ? timeline
+            : Array.from(timeline.entries()).map(([date, count]) => ({ date, count }));
+
+        this.timelineArrayCache = timelineArray;
     }
 
     private getTitleHeader(): string {
@@ -173,8 +189,7 @@ export class TimelineViewComponent {
 
 
     private renderChart() {
-        const timeline = this.data?.timeline;
-        if (!timeline) {
+        if (!this.timelineArrayCache || this.timelineArrayCache.length === 0) {
             const svg = this.container.querySelector('#timeline-chart') as SVGElement;
             if (svg) {
                 const theme = getThemeColors();
@@ -200,12 +215,10 @@ export class TimelineViewComponent {
         svg.setAttribute('height', String(height));
         svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
 
-        // 转换数据
-        const timelineArray: TimelineData[] = Array.isArray(timeline)
-            ? timeline
-            : Array.from(timeline.entries()).map(([date, count]) => ({ date, count }));
+        // 使用缓存的数据
+        const timelineArray = this.timelineArrayCache;
 
-        if (timelineArray.length === 0) {
+        if (!timelineArray || timelineArray.length === 0) {
             svg.innerHTML = `
                 <text x="${width / 2}" y="${height / 2}" text-anchor="middle" fill="${theme.emptyText}">
                     暂无时间线数据
@@ -435,7 +448,6 @@ export class TimelineViewComponent {
     }
 
     private renderCalendar() {
-        const timeline = this.data?.timeline;
         const calendarContainer = this.container.querySelector('#timeline-calendar') as HTMLElement;
         if (!calendarContainer) return;
 
@@ -444,11 +456,9 @@ export class TimelineViewComponent {
 
         // 转换数据
         const timelineMap = new Map<string, number>();
-        if (timeline) {
-            const timelineArray: TimelineData[] = Array.isArray(timeline)
-                ? timeline
-                : Array.from(timeline.entries()).map(([date, count]) => ({ date, count }));
-            timelineArray.forEach(d => timelineMap.set(d.date, d.count));
+        const cache = this.timelineArrayCache;
+        if (cache && cache.length > 0) {
+            cache.forEach(d => timelineMap.set(d.date, d.count));
         }
 
         // 创建日历容器
@@ -551,14 +561,16 @@ export class TimelineViewComponent {
         if (yearSelect) {
             yearSelect.addEventListener('change', () => {
                 this.selectedYear = parseInt(yearSelect.value);
-                this.render(this.data);
+                this.renderChart();
+                this.renderCalendar();
             });
         }
 
         if (monthSelect) {
             monthSelect.addEventListener('change', () => {
                 this.selectedMonth = parseInt(monthSelect.value);
-                this.render(this.data);
+                this.renderChart();
+                this.renderCalendar();
             });
         }
     }

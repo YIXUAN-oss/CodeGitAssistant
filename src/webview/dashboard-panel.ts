@@ -294,6 +294,16 @@ export class DashboardPanel {
                                 await this._fetchCommitDetails((message as any).hashes as string[]);
                             }
                             break;
+                        case 'createBranchFromCommit':
+                            if (message.commitHash && typeof message.commitHash === 'string') {
+                                await this._createBranchFromCommit(message.commitHash as string);
+                            }
+                            break;
+                        case 'createTagFromCommit':
+                            if (message.commitHash && typeof message.commitHash === 'string') {
+                                await vscode.commands.executeCommand('git-assistant.createTag', message.commitHash as string);
+                            }
+                            break;
                         case 'checkoutBranch':
                             if (message.branchName && typeof message.branchName === 'string') {
                                 await this._handleCheckoutBranch(message.branchName as string);
@@ -904,6 +914,8 @@ export class DashboardPanel {
                 try {
                     await this.gitService.add(filePath.fsPath);
                     vscode.window.showInformationMessage('已将文件添加到暂存区');
+                    // 刷新侧边栏的冲突检测视图
+                    await vscode.commands.executeCommand('git-assistant.refreshBranches');
                 } catch (stageError) {
                     const errMsg = stageError instanceof Error ? stageError.message : String(stageError);
                     vscode.window.showErrorMessage(`暂存文件失败: ${errMsg}`);

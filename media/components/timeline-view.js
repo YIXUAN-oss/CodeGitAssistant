@@ -36,6 +36,7 @@ export class TimelineViewComponent {
         this.data = null;
         this.selectedYear = new Date().getFullYear();
         this.selectedMonth = new Date().getMonth() + 1;
+        this.timelineArrayCache = null;
         const container = document.getElementById(containerId);
         if (!container) {
             throw new Error(`Container ${containerId} not found`);
@@ -44,6 +45,7 @@ export class TimelineViewComponent {
     }
     render(data) {
         this.data = data;
+        this.buildTimelineCaches();
         this.container.innerHTML = this.getHtml();
         this.attachEventListeners();
         // 等待DOM渲染完成后渲染图表和日历
@@ -73,6 +75,18 @@ export class TimelineViewComponent {
                 ${this.getCalendarHtml()}
             </div>
         `;
+    }
+    buildTimelineCaches() {
+        var _a;
+        const timeline = (_a = this.data) === null || _a === void 0 ? void 0 : _a.timeline;
+        if (!timeline) {
+            this.timelineArrayCache = null;
+            return;
+        }
+        const timelineArray = Array.isArray(timeline)
+            ? timeline
+            : Array.from(timeline.entries()).map(([date, count]) => ({ date, count }));
+        this.timelineArrayCache = timelineArray;
     }
     getTitleHeader() {
         return `
@@ -150,9 +164,8 @@ export class TimelineViewComponent {
         `;
     }
     renderChart() {
-        var _a, _b;
-        const timeline = (_a = this.data) === null || _a === void 0 ? void 0 : _a.timeline;
-        if (!timeline) {
+        var _a;
+        if (!this.timelineArrayCache || this.timelineArrayCache.length === 0) {
             const svg = this.container.querySelector('#timeline-chart');
             if (svg) {
                 const theme = getThemeColors();
@@ -167,7 +180,7 @@ export class TimelineViewComponent {
         const svg = this.container.querySelector('#timeline-chart');
         if (!svg)
             return;
-        const container = (_b = svg.parentElement) === null || _b === void 0 ? void 0 : _b.parentElement;
+        const container = (_a = svg.parentElement) === null || _a === void 0 ? void 0 : _a.parentElement;
         const width = (container === null || container === void 0 ? void 0 : container.clientWidth) ? Math.max(container.clientWidth - 60, 800) : 1000;
         const height = 300;
         const margin = { top: 20, right: 20, bottom: 50, left: 60 };
@@ -175,11 +188,9 @@ export class TimelineViewComponent {
         svg.setAttribute('width', String(width));
         svg.setAttribute('height', String(height));
         svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-        // 转换数据
-        const timelineArray = Array.isArray(timeline)
-            ? timeline
-            : Array.from(timeline.entries()).map(([date, count]) => ({ date, count }));
-        if (timelineArray.length === 0) {
+        // 使用缓存的数据
+        const timelineArray = this.timelineArrayCache;
+        if (!timelineArray || timelineArray.length === 0) {
             svg.innerHTML = `
                 <text x="${width / 2}" y="${height / 2}" text-anchor="middle" fill="${theme.emptyText}">
                     暂无时间线数据
@@ -391,8 +402,6 @@ export class TimelineViewComponent {
         svg.innerHTML = html;
     }
     renderCalendar() {
-        var _a;
-        const timeline = (_a = this.data) === null || _a === void 0 ? void 0 : _a.timeline;
         const calendarContainer = this.container.querySelector('#timeline-calendar');
         if (!calendarContainer)
             return;
@@ -400,11 +409,9 @@ export class TimelineViewComponent {
         const light = isLightTheme();
         // 转换数据
         const timelineMap = new Map();
-        if (timeline) {
-            const timelineArray = Array.isArray(timeline)
-                ? timeline
-                : Array.from(timeline.entries()).map(([date, count]) => ({ date, count }));
-            timelineArray.forEach(d => timelineMap.set(d.date, d.count));
+        const cache = this.timelineArrayCache;
+        if (cache && cache.length > 0) {
+            cache.forEach(d => timelineMap.set(d.date, d.count));
         }
         // 创建日历容器
         calendarContainer.innerHTML = '';
@@ -496,13 +503,15 @@ export class TimelineViewComponent {
         if (yearSelect) {
             yearSelect.addEventListener('change', () => {
                 this.selectedYear = parseInt(yearSelect.value);
-                this.render(this.data);
+                this.renderChart();
+                this.renderCalendar();
             });
         }
         if (monthSelect) {
             monthSelect.addEventListener('change', () => {
                 this.selectedMonth = parseInt(monthSelect.value);
-                this.render(this.data);
+                this.renderChart();
+                this.renderCalendar();
             });
         }
     }
