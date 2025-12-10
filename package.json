@@ -31,6 +31,11 @@
         "onCommand:git-assistant.initRepository",
         "onCommand:git-assistant.addRemote",
         "onCommand:git-assistant.initialCommit",
+        "onCommand:git-assistant.refreshBranches",
+        "onCommand:git-assistant.openDashboard",
+        "onCommand:git-assistant.showHistory",
+        "onCommand:git-assistant.resolveConflicts",
+        "onCommand:git-assistant.branchQuickActions",
         "onView:git-assistant.branchView",
         "workspaceContains:.git",
         "onStartupFinished"

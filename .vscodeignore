@@ -8,5 +8,3 @@ webpack.config.js
 **/.eslintrc.json
 **/*.map
 **/*.ts
-node_modules/**
-
