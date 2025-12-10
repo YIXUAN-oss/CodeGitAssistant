@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import simpleGit, { SimpleGit, StatusResult, BranchSummary, LogResult } from 'simple-git';
+import { CommitInfo } from '../types/git';
 import { MergeHistory } from '../utils/merge-history';
 import { Logger } from '../utils/logger';
 import { ErrorHandler } from '../utils/error-handler';
@@ -1021,6 +1022,48 @@ export class GitService {
             return await git.diff([file]);
         }
         return await git.diff();
+    }
+
+    /**
+     * 获取一组提交的详细信息（用于前端按需补齐缺失的 message/author）
+     */
+    async getCommitDetails(hashes: string[]): Promise<Record<string, CommitInfo>> {
+        const git = this.ensureGit();
+        const result: Record<string, CommitInfo> = {};
+
+        for (const hash of hashes) {
+            if (!hash) continue;
+            try {
+                const show = await git.raw([
+                    'log',
+                    '-1',
+                    '--format=%H%x00%P%x00%an%x00%ae%x00%ad%x00%B',
+                    hash
+                ]);
+                const parts = show.split('\x00');
+                const h = parts[0]?.trim() || hash;
+                const parentsRaw = parts[1] || '';
+                const an = parts[2]?.trim() || '';
+                const ae = parts[3]?.trim() || '';
+                const ad = parts[4] || '';
+                const body = (parts.slice(5).join('\x00') || '').trim();
+                result[hash] = {
+                    hash: h,
+                    author_name: an,
+                    author_email: ae,
+                    date: ad ? new Date(ad).toISOString() : '',
+                    message: body,
+                    body,
+                    parents: parentsRaw ? parentsRaw.split(/\s+/).filter(Boolean) : [],
+                    branches: []
+                };
+            } catch (error) {
+                ErrorHandler.handleSilent(error, `获取提交详情失败: ${hash.substring(0, 8)}`);
+                continue;
+            }
+        }
+
+        return result;
     }
 
     /**

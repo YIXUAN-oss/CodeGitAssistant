@@ -86,11 +86,6 @@ export class App {
     private render() {
         if (!this.rootElement) return;
 
-        // 切换到非 git-graph 页签时清理实例，避免持有旧引用
-        if (this.activeTab !== 'git-graph') {
-            this.gitGraphViewComponent = null;
-        }
-
         this.rootElement.innerHTML = this.getHtml();
         this.attachEventListeners();
     }
@@ -199,8 +194,12 @@ export class App {
                 const target = e.target as HTMLElement;
                 const tabId = target.dataset.tab as TabType;
                 if (tabId) {
+                    // 切换离开 git-graph 前保存状态
+                    if (this.activeTab === 'git-graph') {
+                        this.gitGraphViewComponent?.saveState();
+                    }
                     this.activeTab = tabId;
-                    // 保存状态
+                    // 保存选中标签
                     if (window.vscode) {
                         const currentState = window.vscode.getState() || {};
                         window.vscode.setState({
@@ -297,8 +296,11 @@ export class App {
             if (container) {
                 if (!this.gitGraphViewComponent) {
                     this.gitGraphViewComponent = new GitGraphViewComponent('git-graph-view-container');
+                    this.gitGraphViewComponent.render(this.gitData);
+                } else {
+                    // 复用实例，重新挂载到新容器并渲染，保持滚动与展开状态
+                    this.gitGraphViewComponent.remount('git-graph-view-container', this.gitData);
                 }
-                this.gitGraphViewComponent.render(this.gitData);
             }
         }
 

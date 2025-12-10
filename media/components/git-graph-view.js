@@ -1,6 +1,5 @@
 /**
  * Git Graph 视图组件 - 表格形式的分支提交历史（基于官方 vscode-git-graph 实现）
- * 从 React 组件转换为原生 TypeScript 类组件
  */
 import { escapeHtml } from '../utils/dom-utils.js';
 import { GitGraphRenderer } from '../utils/git-graph-renderer.js';
@@ -247,6 +246,7 @@ export class GitGraphViewComponent {
         this.mutedCommits = [];
         this.commitFilesCache = new Map();
         this.commitFilesLoading = new Set();
+        this.commitDetailsRequested = new Set();
         // 渲染优化
         this.renderTimeoutRef = null;
         this.renderFrameRef = null;
@@ -279,6 +279,30 @@ export class GitGraphViewComponent {
         this.loadStateFromWebview();
         // 初始化工具组件
         this.initializeTools();
+        // 监听来自扩展端的增量数据（如 commitDetails）
+        this.attachWindowMessageListener();
+    }
+    /**
+     * 重新挂载到新的容器（用于 Tab 切换后 DOM 被重建的场景）
+     */
+    remount(containerId, data) {
+        var _a;
+        const container = document.getElementById(containerId);
+        if (!container) {
+            throw new Error(`Container ${containerId} not found`);
+        }
+        this.container = container;
+        // 清理旧的 DOM 引用，强制在下一次 render 中重新获取并绑定事件
+        this.containerRef = null;
+        this.headerRef = null;
+        this.graphSvgRef = null;
+        this.detailCellRef = null;
+        this.eventListenersAttached = false;
+        (_a = this.detailResizeObserver) === null || _a === void 0 ? void 0 : _a.disconnect();
+        this.detailResizeObserver = null;
+        // 重新渲染以恢复 UI 和滚动状态（使用最新数据）
+        const nextData = typeof data !== 'undefined' ? data : this.data;
+        this.render(nextData);
     }
     /**
      * 从 webview 持久化状态恢复展开、滚动等信息
@@ -362,6 +386,7 @@ export class GitGraphViewComponent {
             const dagChanged = ((_b = data === null || data === void 0 ? void 0 : data.branchGraph) === null || _b === void 0 ? void 0 : _b.dag) !== this.dagRef;
             const branchChanged = (((_c = data === null || data === void 0 ? void 0 : data.branchGraph) === null || _c === void 0 ? void 0 : _c.currentBranch) || ((_d = data === null || data === void 0 ? void 0 : data.branches) === null || _d === void 0 ? void 0 : _d.current)) !== this.currentBranchRef;
             const incomingCommitFiles = data === null || data === void 0 ? void 0 : data.commitFiles;
+            const incomingCommitDetails = data === null || data === void 0 ? void 0 : data.commitDetails;
             if (commitsChanged)
                 this.commitsRef = ((_e = data === null || data === void 0 ? void 0 : data.log) === null || _e === void 0 ? void 0 : _e.all) || [];
             if (dagChanged)
@@ -374,6 +399,9 @@ export class GitGraphViewComponent {
                     this.commitFilesLoading.delete(hash);
                 });
                 this.saveState(); // commit 文件加载后保存，避免刷新丢失
+            }
+            if (incomingCommitDetails) {
+                this.mergeCommitDetails(incomingCommitDetails);
             }
             // 初始化或更新 GitGraphRenderer
             if (!this.graphRenderer) {
@@ -520,6 +548,7 @@ export class GitGraphViewComponent {
      * 构建图形数据（基于官方算法）
      */
     buildGraphData() {
+        var _a;
         // 如果没有提交数据，直接返回
         if (!this.commitsRef || this.commitsRef.length === 0) {
             this.commitNodes = [];
@@ -562,34 +591,78 @@ export class GitGraphViewComponent {
         // 构建提交信息映射
         const commitMap = new Map();
         commits.forEach(commit => {
+            var _a;
+            const cached = (_a = this.commitInfoMap) === null || _a === void 0 ? void 0 : _a.get(commit.hash);
             commitMap.set(commit.hash, {
                 hash: commit.hash,
-                message: commit.message || '',
-                date: commit.date || '',
-                author_name: commit.author_name || '',
-                author_email: commit.author_email || '',
-                parents: commit.parents || [],
-                branches: commit.branches || []
+                message: commit.message || (cached === null || cached === void 0 ? void 0 : cached.message) || commit.hash,
+                date: commit.date || (cached === null || cached === void 0 ? void 0 : cached.date) || '',
+                author_name: commit.author_name || (cached === null || cached === void 0 ? void 0 : cached.author_name) || '',
+                author_email: commit.author_email || (cached === null || cached === void 0 ? void 0 : cached.author_email) || '',
+                parents: commit.parents || (cached === null || cached === void 0 ? void 0 : cached.parents) || [],
+                branches: commit.branches || (cached === null || cached === void 0 ? void 0 : cached.branches) || []
             });
+        });
+        // 使用 dag.nodes 补齐 log 缺失的提交，避免节点显示为空信息
+        dag.nodes.forEach((node) => {
+            var _a;
+            if (!commitMap.has(node.hash)) {
+                const cached = (_a = this.commitInfoMap) === null || _a === void 0 ? void 0 : _a.get(node.hash);
+                commitMap.set(node.hash, {
+                    hash: node.hash,
+                    message: (cached === null || cached === void 0 ? void 0 : cached.message) || node.hash,
+                    date: node.timestamp ? new Date(node.timestamp).toISOString() : ((cached === null || cached === void 0 ? void 0 : cached.date) || ''),
+                    author_name: (cached === null || cached === void 0 ? void 0 : cached.author_name) || '',
+                    author_email: (cached === null || cached === void 0 ? void 0 : cached.author_email) || '',
+                    parents: (cached === null || cached === void 0 ? void 0 : cached.parents) || node.parents || [],
+                    branches: (cached === null || cached === void 0 ? void 0 : cached.branches) || node.branches || []
+                });
+            }
         });
         // 构建节点映射
         const nodeMap = new Map();
         dag.nodes.forEach((node) => {
-            var _a, _b;
+            var _a, _b, _c;
             // 兜底：如果 dag 未返回 parents，则使用 log 中的父提交，避免断线
             const fallbackParents = ((_a = commitMap.get(node.hash)) === null || _a === void 0 ? void 0 : _a.parents) || [];
             const fallbackBranches = ((_b = commitMap.get(node.hash)) === null || _b === void 0 ? void 0 : _b.branches) || [];
+            const fallbackFromCache = (_c = this.commitInfoMap) === null || _c === void 0 ? void 0 : _c.get(node.hash);
             nodeMap.set(node.hash, {
                 hash: node.hash,
-                branches: (node.branches && node.branches.length > 0) ? node.branches : fallbackBranches,
-                parents: (node.parents && node.parents.length > 0) ? node.parents : fallbackParents,
+                branches: (node.branches && node.branches.length > 0)
+                    ? node.branches
+                    : ((fallbackFromCache === null || fallbackFromCache === void 0 ? void 0 : fallbackFromCache.branches) || fallbackBranches),
+                parents: (node.parents && node.parents.length > 0)
+                    ? node.parents
+                    : ((fallbackFromCache === null || fallbackFromCache === void 0 ? void 0 : fallbackFromCache.parents) || fallbackParents),
                 timestamp: node.timestamp || 0
             });
         });
-        // 按时间排序（新的在上）
-        const sortedHashes = Array.from(nodeMap.entries())
-            .sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0))
-            .map(([hash]) => hash);
+        // 如果 dag 里缺少某些 log 提交，补充到 nodeMap，避免父提交缺失导致断线
+        commitMap.forEach((value, hash) => {
+            var _a;
+            if (!nodeMap.has(hash)) {
+                const fallbackFromCache = (_a = this.commitInfoMap) === null || _a === void 0 ? void 0 : _a.get(hash);
+                nodeMap.set(hash, {
+                    hash,
+                    branches: (fallbackFromCache === null || fallbackFromCache === void 0 ? void 0 : fallbackFromCache.branches) || value.branches || [],
+                    parents: (fallbackFromCache === null || fallbackFromCache === void 0 ? void 0 : fallbackFromCache.parents) || value.parents || [],
+                    timestamp: value.date ? Date.parse(value.date) || 0 : 0
+                });
+            }
+        });
+        // 使用 dag 原顺序（topo-order）为主，缺失的 log 提交追加在末尾，避免拓扑破坏
+        // 纯函数构造，避免大仓库下重复 push 造成 UI 卡顿
+        const seen = new Set();
+        const sortedHashes = [
+            ...dag.nodes.map((n) => n.hash).filter(hash => {
+                if (seen.has(hash))
+                    return false;
+                seen.add(hash);
+                return true;
+            }),
+            ...Array.from(commitMap.keys()).filter(hash => !seen.has(hash))
+        ];
         // 构建顶点和分支（类似官方实现）
         const vertices = sortedHashes.map((_, i) => new Vertex(i));
         const commitLookup = {};
@@ -763,10 +836,12 @@ export class GitGraphViewComponent {
                     };
                 }
             }
+            const finalMessage = (commitInfo.message || '').trim() || hash; // 确保始终有内容，避免出现“无提交信息”
+            const finalDate = commitInfo.date || (node.timestamp ? new Date(node.timestamp).toISOString() : '');
             return {
                 hash,
-                message: commitInfo.message,
-                date: commitInfo.date,
+                message: finalMessage,
+                date: finalDate,
                 author_name: commitInfo.author_name,
                 author_email: commitInfo.author_email,
                 parents: (node.parents && node.parents.length > 0)
@@ -785,13 +860,21 @@ export class GitGraphViewComponent {
         this.commitIndexMap.clear();
         this.commitNodes.forEach((node, idx) => this.commitIndexMap.set(node.hash, idx));
         this.graphBranches = branches;
-        // 构建提交信息映射
-        this.commitInfoMap = new Map();
+        // 构建提交信息映射（保留已有缓存，追加最新 log）
+        const prevCommitInfoMap = (_a = this.commitInfoMap) !== null && _a !== void 0 ? _a : new Map();
+        const merged = new Map();
+        prevCommitInfoMap.forEach((v, k) => merged.set(k, v));
         if (this.commitsRef) {
-            this.commitsRef.forEach((c) => this.commitInfoMap.set(c.hash, c));
+            this.commitsRef.forEach((c) => {
+                const prev = prevCommitInfoMap.get(c.hash);
+                merged.set(c.hash, Object.assign(Object.assign(Object.assign({}, prev), c), { parents: c.parents || (prev === null || prev === void 0 ? void 0 : prev.parents) || [], branches: c.branches || (prev === null || prev === void 0 ? void 0 : prev.branches) || [] }));
+            });
         }
+        this.commitInfoMap = merged;
         // 计算 muted 提交
         this.calculateMutedCommits();
+        // 渲染阶段按需补齐缺失的提交详情
+        this.requestMissingCommitDetails();
     }
     getCommitIndex(hash) {
         var _a;
@@ -957,8 +1040,9 @@ export class GitGraphViewComponent {
                             ${visibleCommits.map((commit) => {
             const isCurrent = commit.hash === (commitHead || currentBranchName);
             const fullCommit = this.commitInfoMap.get(commit.hash);
-            const commitMessage = ((fullCommit === null || fullCommit === void 0 ? void 0 : fullCommit.message) || commit.message || '').trim();
-            const displayMessage = commitMessage || '(无提交信息)';
+            // 渲染兜底：如果 message 为空，用哈希显示，避免出现“无提交信息”
+            const commitMessage = ((fullCommit === null || fullCommit === void 0 ? void 0 : fullCommit.message) || commit.message || commit.hash || '').trim();
+            const displayMessage = commitMessage || commit.hash;
             const parents = commit.parents || [];
             const commitIndex = this.getCommitIndex(commit.hash);
             const isMuted = commitIndex >= 0 && this.mutedCommits[commitIndex];
@@ -2173,6 +2257,82 @@ export class GitGraphViewComponent {
             vscode.postMessage({
                 command: 'loadCommitFiles',
                 commitHash: hash
+            });
+        }
+    }
+    /**
+     * 监听 window message，合并 commitDetails 后局部重绘
+     */
+    attachWindowMessageListener() {
+        window.addEventListener('message', (event) => {
+            const payload = event.data || {};
+            if (!payload || (payload.type !== 'gitDataUpdate' && payload.type !== 'gitData'))
+                return;
+            const details = (payload.data || {}).commitDetails;
+            if (details && this.mergeCommitDetails(details)) {
+                if (this.data) {
+                    this.render(this.data);
+                }
+            }
+        });
+    }
+    /**
+     * 合并后端返回的提交详情到 commitInfoMap
+     */
+    mergeCommitDetails(details) {
+        let changed = false;
+        if (!details)
+            return changed;
+        Object.entries(details).forEach(([hash, info]) => {
+            const prev = this.commitInfoMap.get(hash);
+            const next = Object.assign(Object.assign(Object.assign({}, prev), info), { parents: info.parents || (prev === null || prev === void 0 ? void 0 : prev.parents) || [], branches: info.branches || (prev === null || prev === void 0 ? void 0 : prev.branches) || [] });
+            const isSame = prev &&
+                prev.message === next.message &&
+                prev.author_name === next.author_name &&
+                prev.author_email === next.author_email &&
+                prev.date === next.date &&
+                prev.body === next.body;
+            this.commitInfoMap.set(hash, next);
+            this.commitDetailsRequested.delete(hash);
+            if (!isSame) {
+                changed = true;
+            }
+        });
+        return changed;
+    }
+    /**
+     * 判断某个提交是否缺少详情（需要向后端补齐）
+     */
+    needsCommitDetails(hash, info) {
+        if (!info)
+            return true;
+        const hasMessage = !!(info.message && info.message.trim());
+        const hasAuthor = !!(info.author_name && info.author_name.trim());
+        const hasEmail = !!(info.author_email && info.author_email.trim());
+        const hasDate = !!(info.date && info.date.trim());
+        const hasBody = typeof info.body === 'string' && info.body.trim().length > 0;
+        return !(hasMessage && hasAuthor && hasEmail && hasDate && hasBody);
+    }
+    /**
+     * 在渲染时收集缺失详情的哈希并请求补齐
+     */
+    requestMissingCommitDetails() {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const vscode = window.vscode;
+        if (!vscode)
+            return;
+        const missing = [];
+        for (const node of this.commitNodes) {
+            const info = this.commitInfoMap.get(node.hash);
+            if (this.needsCommitDetails(node.hash, info) && !this.commitDetailsRequested.has(node.hash)) {
+                this.commitDetailsRequested.add(node.hash);
+                missing.push(node.hash);
+            }
+        }
+        if (missing.length > 0) {
+            vscode.postMessage({
+                command: 'fetchCommitDetails',
+                hashes: missing
             });
         }
     }

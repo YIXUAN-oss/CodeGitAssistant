@@ -54,6 +54,8 @@ export interface CommitInfo {
     author_email: string;
     body: string;
     refs?: string;
+    parents?: string[];
+    branches?: string[];
 }
 
 export interface LogResult {
@@ -225,5 +227,6 @@ export interface GitData {
     categories?: Category[];
     currentBranch?: string | null;
     commitFiles?: Record<string, CommitFileChange[]>;
+    commitDetails?: Record<string, CommitInfo>;
 }
 

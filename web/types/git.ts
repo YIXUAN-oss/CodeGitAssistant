@@ -174,5 +174,6 @@ export interface GitData {
     categories?: Category[];
     currentBranch?: string | null;
     commitFiles?: Record<string, CommitFileChange[]>;
+    commitDetails?: Record<string, CommitInfo>;
 }
 

@@ -289,6 +289,11 @@ export class DashboardPanel {
                                 await this._checkoutCommit(message.commitHash as string);
                             }
                             break;
+                        case 'fetchCommitDetails':
+                            if (Array.isArray((message as any).hashes)) {
+                                await this._fetchCommitDetails((message as any).hashes as string[]);
+                            }
+                            break;
                         case 'checkoutBranch':
                             if (message.branchName && typeof message.branchName === 'string') {
                                 await this._handleCheckoutBranch(message.branchName as string);
@@ -333,6 +338,29 @@ export class DashboardPanel {
             // 执行出错时，记录失败状态和错误信息
             CommandHistory.addCommand(commandId, commandName, false, errorMessage);
             await this._sendGitData();
+        }
+    }
+
+    /**
+     * 按需获取提交详情（用于前端补齐缺失的 message / author 等）
+     */
+    private async _fetchCommitDetails(hashes: string[]) {
+        try {
+            if (!hashes || hashes.length === 0) {
+                return;
+            }
+            const details = await this.gitService.getCommitDetails(hashes);
+            if (this._disposed) {
+                return;
+            }
+            this._panel.webview.postMessage({
+                type: 'gitDataUpdate',
+                data: {
+                    commitDetails: details
+                }
+            });
+        } catch (error) {
+            ErrorHandler.handleSilent(error, '获取提交详情');
         }
     }
 
@@ -1257,24 +1285,53 @@ export class DashboardPanel {
                     }
 
                     // 分支图加载优先级降低，先加载其他数据
-                    const [
-                        fileStatsResult,
-                        contributorStatsResult,
-                        timelineResult,
-                        branchGraphResult,
-                        // 强制刷新更完整的提交日志，确保与最新分支图对齐（避免出现“无提交信息”）
-                        logRefreshResult
-                    ] = await Promise.allSettled([
+                    const heavyTasks: Promise<unknown>[] = [
                         // 缩短统计时间范围，减轻大仓库压力
                         this.gitService.getFileStats(180),
                         this.gitService.getContributorStats(180),
                         this.gitService.getCommitTimeline(180),
                         // 分支图放在最后加载（计算成本最高）
-                        this.gitService.getBranchGraph(), // 使用缓存
-                        // 获取更大的提交窗口并强制刷新，确保包含最新提交信息
-                        // 使用 800 个提交，确保与分支图的最大提交数一致，避免出现"无提交信息"
-                        this.gitService.getLog(800, undefined, true)
-                    ]);
+                        this.gitService.getBranchGraph() // 使用缓存
+                    ];
+
+                    // 若首批已强制刷新日志，则跳过二次日志刷新，减少重复 IO
+                    const shouldRefreshLogInBackground = !forceRefreshLog;
+                    if (shouldRefreshLogInBackground) {
+                        heavyTasks.push(
+                            // 获取更大的提交窗口并强制刷新，确保包含最新提交信息
+                            // 使用 800 个提交，确保与分支图的最大提交数一致，避免出现"无提交信息"
+                            this.gitService.getLog(800, undefined, true)
+                        );
+                    }
+
+                    const heavyResults = await Promise.allSettled(heavyTasks) as [
+                        PromiseSettledResult<Map<string, number>>,
+                        PromiseSettledResult<Map<string, { commits: number; files: Set<string> }>>,
+                        PromiseSettledResult<Map<string, number>>,
+                        PromiseSettledResult<BranchGraphData>,
+                        PromiseSettledResult<any>?
+                    ];
+                    const [
+                        fileStatsResult,
+                        contributorStatsResult,
+                        timelineResult,
+                        branchGraphResult,
+                        logRefreshResultRaw
+                    ] = [
+                            heavyResults[0],
+                            heavyResults[1],
+                            heavyResults[2],
+                            heavyResults[3],
+                            heavyResults[4]
+                        ];
+
+                    // 当跳过后台日志刷新时，构造一个占位结果，避免后续判空
+                    const logRefreshResult: PromiseSettledResult<any> = shouldRefreshLogInBackground
+                        ? (logRefreshResultRaw as PromiseSettledResult<any>)
+                        : ({
+                            status: 'rejected',
+                            reason: 'log refresh skipped after forced refresh'
+                        } as PromiseRejectedResult);
 
                     if (this._disposed) {
                         return;
