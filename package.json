@@ -2,7 +2,7 @@
     "name": "git-assistant",
     "displayName": "Git Assistant - 增强版Git工具",
     "description": "强大的Git可视化管理工具，支持快捷操作、分支管理、提交历史可视化和冲突解决",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "publisher": "YIXUAN",
     "icon": "resources/git-icon.png",
     "repository": {
