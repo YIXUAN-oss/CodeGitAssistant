@@ -870,6 +870,11 @@ body {
     color: var(--vscode-descriptionForeground);
 }
 
+.command-desc .command-cli {
+    color: #007acc;
+    font-family: var(--vscode-editor-font-family);
+}
+
 .history-section {
     margin-top: 30px;
 }
@@ -903,6 +908,186 @@ body {
     display: flex;
     align-items: center;
     gap: 4px;
+}
+
+/* 冲突解决组件样式 */
+.conflict-editor {
+    width: 100%;
+}
+
+.conflict-count {
+    font-size: 13px;
+    color: var(--vscode-descriptionForeground);
+    /* 覆盖 section-header > div 的 flex 设置，使用普通内联块呈现整句话 */
+    display: inline-block !important;
+    text-align: right;
+    justify-content: initial;
+    align-items: initial;
+    gap: 0;
+    word-spacing: 0;
+}
+
+.conflict-count .count {
+    color: var(--vscode-textLink-foreground);
+    font-weight: 600;
+}
+
+.conflict-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
+.conflict-item {
+    padding: 12px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--vscode-panel-border);
+    background: var(--vscode-editor-background);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.conflict-item:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.conflict-item.selected {
+    /* 选中时只做轻微背景高亮，不使用醒目的蓝色描边 */
+    border-color: var(--vscode-panel-border);
+    box-shadow: none;
+    background: var(--vscode-list-hoverBackground);
+}
+
+.conflict-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.conflict-icon {
+    margin-right: 8px;
+}
+
+.file-path {
+    font-family: var(--vscode-editor-font-family);
+    font-size: 13px;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.open-button {
+    padding: 6px 12px;
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    border-radius: 4px;
+    border: 1px solid var(--vscode-panel-border);
+    cursor: pointer;
+    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.open-button:hover {
+    background: var(--vscode-button-secondaryHoverBackground);
+    border-color: var(--vscode-focusBorder);
+}
+
+.conflict-actions {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--vscode-panel-border);
+}
+
+.conflict-actions h4 {
+    margin: 0 0 10px 0;
+    font-size: 13px;
+}
+
+.action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.action-button {
+    flex: 1 1 180px;
+    min-width: 0;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--vscode-panel-border);
+    background: var(--vscode-sideBar-background);
+    cursor: pointer;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.action-button:hover {
+    background: var(--vscode-list-hoverBackground);
+    border-color: var(--vscode-focusBorder);
+    transform: translateY(-1px);
+}
+
+/* 避免获得焦点/点击后被全局按钮样式改成纯蓝背景 */
+.action-button:focus,
+.action-button:focus-visible,
+.action-button:active {
+    outline: none;
+    background: var(--vscode-list-hoverBackground);
+    border-color: var(--vscode-focusBorder);
+    color: var(--vscode-foreground);
+}
+
+.action-button .button-icon {
+    font-size: 16px;
+    flex-shrink: 0;
+    color: var(--vscode-foreground);
+}
+
+.action-button .button-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+}
+
+.action-button .button-desc {
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+}
+
+.manual-edit {
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+}
+
+.conflict-guide {
+    margin-top: 28px;
+    padding: 18px 20px;
+    border-radius: 8px;
+    background: var(--vscode-textBlockQuote-background);
+    border: 1px solid var(--vscode-panel-border);
+}
+
+.conflict-guide h3 {
+    margin: 0 0 10px 0;
+    font-size: 15px;
+}
+
+.conflict-guide ul {
+    margin: 0;
+    padding-left: 20px;
+    font-size: 13px;
+}
+
+.conflict-guide li+li {
+    margin-top: 6px;
 }
 
 /* Git 指令集组件样式 */

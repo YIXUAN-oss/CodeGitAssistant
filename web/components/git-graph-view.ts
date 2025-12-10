@@ -1396,8 +1396,8 @@ export class GitGraphViewComponent {
 
         return `
             <span class="description description-container">
-                ${currentLabel}
-                <span class="description-refs">
+                <span class="unmute-in-muted-row">${currentLabel}</span>
+                <span class="description-refs unmute-in-muted-row">
                     ${branchLabels}
                     ${extraBranchCount > 0 ? this.renderOverflowLabel(extraBranchCount, 'branch') : ''}
                     ${tagLabels}
@@ -1517,13 +1517,20 @@ export class GitGraphViewComponent {
         const [remoteName, ...rest] = remoteTrimmed.split('/');
         const displayName = isRemote ? rest.join('/') || remoteTrimmed : branch;
         const branchColor = BRANCH_COLORS[colorIndex % BRANCH_COLORS.length];
+        const isMainBranch = displayName === 'main' || displayName.endsWith('/main');
+        const borderColor = isBranchCurrent
+            ? (isMainBranch ? 'rgba(128, 128, 128, 0.75)' : branchColor)
+            : 'rgba(128, 128, 128, 0.75)';
+        const textColor = isBranchCurrent
+            ? (isMainBranch ? 'var(--vscode-foreground)' : branchColor)
+            : 'var(--vscode-foreground)';
 
         return `
             <span
-                class="gitRef${isBranchCurrent ? ' active' : ''}${isRemote ? ' remote' : ' head'}"
+                class="gitRef branch-label${isBranchCurrent ? ' active' : ''}${isRemote ? ' remote' : ' head'}"
                 data-name="${escapeHtml(branch)}"
                 data-commit-hash="${escapeHtml(commitHash)}"
-                style="border-color: ${isBranchCurrent ? branchColor : 'undefined'}; color: ${isBranchCurrent ? branchColor : 'undefined'};"
+                style="border-color: ${borderColor}; color: ${textColor}; opacity: 1;"
             >
                 <span class="gitRefIcon" aria-hidden="true" style="background-color: ${branchColor};">
                     ${SVG_ICONS.branch}
@@ -1937,81 +1944,21 @@ export class GitGraphViewComponent {
             return;
         }
 
-        // 构建上下文菜单动作
+        // 构建上下文菜单动作（精简版）
         const actions: ContextMenuActions = [
             [
                 {
-                    title: '查看提交详情',
+                    title: '创建新分支',
                     visible: true,
                     onClick: () => {
-                        this.handleCommitClick(hash);
+                        this.showCreateBranchDialog(hash);
                     }
                 },
                 {
-                    title: '复制提交哈希',
+                    title: '创建新标签',
                     visible: true,
                     onClick: () => {
-                        navigator.clipboard.writeText(hash);
-                    }
-                }
-            ],
-            [
-                {
-                    title: '复制提交消息',
-                    visible: true,
-                    onClick: () => {
-                        const msg = this.commitInfoMap.get(hash)?.message || '';
-                        if (msg) {
-                            navigator.clipboard.writeText(msg);
-                        }
-                    }
-                },
-                {
-                    title: '复制作者信息',
-                    visible: true,
-                    onClick: () => {
-                        const commitInfo = this.commitInfoMap.get(hash);
-                        const author = commitInfo?.author_name || '';
-                        const email = commitInfo?.author_email || '';
-                        const text = email ? `${author} <${email}>` : author;
-                        if (text) {
-                            navigator.clipboard.writeText(text);
-                        }
-                    }
-                },
-                {
-                    title: '复制提交日期',
-                    visible: true,
-                    onClick: () => {
-                        const date = this.commitInfoMap.get(hash)?.date || '';
-                        if (date) {
-                            navigator.clipboard.writeText(formatLongDate(date));
-                        }
-                    }
-                }
-            ],
-            [
-                {
-                    title: '复制短哈希',
-                    visible: true,
-                    onClick: () => {
-                        navigator.clipboard.writeText(hash.substring(0, 8));
-                    }
-                },
-                {
-                    title: '复制引用',
-                    visible: true,
-                    onClick: () => {
-                        const node = this.getCommitNode(hash);
-                        const full = this.commitInfoMap.get(hash);
-                        const refs = this.getRefInfo(node || { hash } as CommitNode, full);
-                        const lines: string[] = [];
-                        if (refs.branches.length) lines.push(`Branches: ${refs.branches.join(', ')}`);
-                        if (refs.tags.length) lines.push(`Tags: ${refs.tags.join(', ')}`);
-                        if (refs.head) lines.push(`HEAD -> ${refs.head}`);
-                        if (lines.length) {
-                            navigator.clipboard.writeText(lines.join('\n'));
-                        }
+                        this.showCreateTagDialog(hash);
                     }
                 },
                 {
@@ -2020,67 +1967,35 @@ export class GitGraphViewComponent {
                     onClick: () => {
                         this.showCheckoutDialog(hash);
                     }
-                },
-                {
-                    title: '创建新分支',
-                    visible: true,
-                    onClick: () => {
-                        this.showCreateBranchDialog(hash);
-                    }
                 }
             ],
             [
                 {
-                    title: '创建标签',
+                    title: '复制标题',
                     visible: true,
                     onClick: () => {
-                        this.showCreateTagDialog(hash);
+                        const msg = this.commitInfoMap.get(hash)?.message || '';
+                        const title = msg.split(/\r?\n/)[0] || '';
+                        if (title) {
+                            navigator.clipboard.writeText(title);
+                        }
                     }
                 },
                 {
-                    title: 'Cherry-pick',
+                    title: '复制提交哈希',
                     visible: true,
                     onClick: () => {
-                        this.requestCherryPick(hash);
+                        navigator.clipboard.writeText(hash);
                     }
                 },
                 {
-                    title: 'Revert',
+                    title: '复制提交消息',
                     visible: true,
                     onClick: () => {
-                        this.requestRevert(hash);
-                    }
-                }
-            ],
-            [
-                {
-                    title: '重置到此处',
-                    visible: true,
-                    onClick: () => {
-                        this.showResetDialog(hash);
-                    }
-                }
-            ],
-            [
-                {
-                    title: '与工作区对比',
-                    visible: true,
-                    onClick: () => {
-                        this.requestCompareWithWorkingTree(hash);
-                    }
-                },
-                {
-                    title: '与上一提交对比',
-                    visible: true,
-                    onClick: () => {
-                        this.requestCompareWithPrevious(hash);
-                    }
-                },
-                {
-                    title: '生成补丁文件',
-                    visible: true,
-                    onClick: () => {
-                        this.requestCreatePatch(hash);
+                        const msg = this.commitInfoMap.get(hash)?.message || '';
+                        if (msg) {
+                            navigator.clipboard.writeText(msg);
+                        }
                     }
                 }
             ]

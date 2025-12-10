@@ -20,6 +20,7 @@ export class App {
         this.isLoading = true;
         this.rootElement = null;
         this.gitGraphViewComponent = null;
+        this.tabScrollPositions = {};
         // 从持久化状态中恢复上次的标签页
         const savedState = (_a = window.vscode) === null || _a === void 0 ? void 0 : _a.getState();
         if (savedState === null || savedState === void 0 ? void 0 : savedState.activeTab) {
@@ -76,8 +77,20 @@ export class App {
     render() {
         if (!this.rootElement)
             return;
+        let previousScrollTop = 0;
+        const previousMain = this.rootElement.querySelector('.app-main');
+        if (previousMain) {
+            previousScrollTop = previousMain.scrollTop;
+        }
+        if (this.activeTab) {
+            this.tabScrollPositions[this.activeTab] = previousScrollTop;
+        }
         this.rootElement.innerHTML = this.getHtml();
         this.attachEventListeners();
+        const newMain = this.rootElement.querySelector('.app-main');
+        if (newMain && this.activeTab && typeof this.tabScrollPositions[this.activeTab] === 'number') {
+            newMain.scrollTop = this.tabScrollPositions[this.activeTab];
+        }
     }
     getHtml() {
         if (this.isLoading) {

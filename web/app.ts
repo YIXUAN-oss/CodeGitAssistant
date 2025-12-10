@@ -24,6 +24,7 @@ export class App {
     private isLoading: boolean = true;
     private rootElement: HTMLElement | null = null;
     private gitGraphViewComponent: GitGraphViewComponent | null = null;
+    private tabScrollPositions: Partial<Record<TabType, number>> = {};
 
     constructor() {
         // 从持久化状态中恢复上次的标签页
@@ -86,8 +87,23 @@ export class App {
     private render() {
         if (!this.rootElement) return;
 
+        let previousScrollTop = 0;
+        const previousMain = this.rootElement.querySelector('.app-main') as HTMLElement | null;
+        if (previousMain) {
+            previousScrollTop = previousMain.scrollTop;
+        }
+
+        if (this.activeTab) {
+            this.tabScrollPositions[this.activeTab] = previousScrollTop;
+        }
+
         this.rootElement.innerHTML = this.getHtml();
         this.attachEventListeners();
+
+        const newMain = this.rootElement.querySelector('.app-main') as HTMLElement | null;
+        if (newMain && this.activeTab && typeof this.tabScrollPositions[this.activeTab] === 'number') {
+            newMain.scrollTop = this.tabScrollPositions[this.activeTab] as number;
+        }
     }
 
     private getHtml(): string {

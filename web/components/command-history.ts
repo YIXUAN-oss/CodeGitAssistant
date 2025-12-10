@@ -49,6 +49,11 @@ export class CommandHistoryComponent {
         `;
     }
 
+    private formatCommandDescription(desc: string): string {
+        const safe = escapeHtml(desc || '');
+        return safe.replace(/\(([^)]+)\)\s*$/g, '<span class="command-cli">($1)</span>');
+    }
+
     private getSectionHeader(): string {
         return `
             <div class="section-header">
@@ -193,17 +198,20 @@ export class CommandHistoryComponent {
                                     <div class="commands-grid">
                                         ${categoryCommands.map(cmd => {
                 const isAvailable = this.isCommandAvailable(cmd, state);
+                const titleText = !isAvailable
+                    ? '当前状态不可用此命令'
+                    : escapeHtml(cmd.description || '');
                 return `
                                                 <div class="command-card ${isAvailable ? 'available' : 'unavailable'}" 
                                                      data-command-id="${isAvailable ? cmd.id : ''}"
-                                                     title="${!isAvailable ? '当前状态不可用此命令' : cmd.description}">
+                                                     title="${titleText}">
                                                     <span class="command-icon">${cmd.icon}</span>
                                                     <div class="command-info">
                                                         <div class="command-name">
                                                             ${escapeHtml(cmd.name)}
                                                             ${!isAvailable ? '<span class="unavailable-badge">(不可用)</span>' : ''}
                                                         </div>
-                                                        <div class="command-desc">${escapeHtml(cmd.description)}</div>
+                                                        <div class="command-desc">${this.formatCommandDescription(cmd.description)}</div>
                                                     </div>
                                                 </div>
                                             `;

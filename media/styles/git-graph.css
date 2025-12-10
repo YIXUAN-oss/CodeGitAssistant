@@ -156,8 +156,7 @@
     flex-grow: 1;
 }
 
-#commitTable tr.commit.mute td.text,
-#commitTable tr.commit.mute span.description .text {
+#commitTable tr.commit.mute .description-text {
     opacity: 0.5;
 }
 
@@ -379,10 +378,8 @@ tr.commit-details {
     outline-offset: -1px;
 }
 
-#commitTable tr.commit.mute.commitDetailsOpen td.text,
-#commitTable tr.commit.mute.commitDetailsOpen span.description .text,
-#commitTable tr.commit.mute.findCurrentCommit td.text,
-#commitTable tr.commit.mute.findCurrentCommit span.description .text {
+#commitTable tr.commit.mute.commitDetailsOpen .description-text,
+#commitTable tr.commit.mute.findCurrentCommit .description-text {
     opacity: 1;
 }
 
@@ -622,4 +619,21 @@ tr.commit-details {
 .gitRef {
     -webkit-user-select: none;
     user-select: none;
+}
+
+/* Custom styles to override muted colors and unify branch borders */
+
+/* Ensure elements with 'unmute-in-muted-row' class remain fully opaque even in a muted row */
+.commit.mute .unmute-in-muted-row {
+    opacity: 1 !important;
+}
+
+/* Unify all branch label borders to a standard color, overriding specific branch colors like for 'main' */
+.branch-label {
+    border-color: rgba(128, 128, 128, 0.75) !important;
+}
+
+/* Maintain the active branch's border color for visual distinction */
+.branch-label.active {
+    border-color: var(--vscode-textLink-foreground) !important;
 }

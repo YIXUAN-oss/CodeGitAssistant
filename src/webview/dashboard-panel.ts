@@ -893,6 +893,23 @@ export class DashboardPanel {
             await document.save();
 
             vscode.window.showInformationMessage(`✅ 冲突已解决: ${file}`);
+
+            // 解决后提示是否直接暂存
+            const choice = await vscode.window.showInformationMessage(
+                '是否将已解决的文件添加到暂存区？',
+                '暂存该文件',
+                '稍后'
+            );
+            if (choice === '暂存该文件') {
+                try {
+                    await this.gitService.add(filePath.fsPath);
+                    vscode.window.showInformationMessage('已将文件添加到暂存区');
+                } catch (stageError) {
+                    const errMsg = stageError instanceof Error ? stageError.message : String(stageError);
+                    vscode.window.showErrorMessage(`暂存文件失败: ${errMsg}`);
+                }
+            }
+
             await this._sendGitData(); // 刷新数据
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
