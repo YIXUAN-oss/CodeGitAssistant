@@ -89,6 +89,29 @@ export class HeatmapAnalysisComponent {
             throw new Error(`Container ${containerId} not found`);
         }
         this.container = container;
+
+        // 从 webview 状态中恢复当前子标签（文件修改频率 / 贡献者活跃度）
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const vscode = (window as any).vscode;
+            const state = vscode?.getState?.() || {};
+            const heatmapState = state.heatmapView || {};
+            if (heatmapState.activeTab === 'files' || heatmapState.activeTab === 'contributors') {
+                this.activeTab = heatmapState.activeTab;
+            }
+        } catch {
+            // 忽略在非 webview 环境中访问 vscode API 的错误
+        }
+    }
+
+    public remount(containerId: string, data?: GitData | null) {
+        const container = document.getElementById(containerId);
+        if (!container) {
+            throw new Error(`Container ${containerId} not found`);
+        }
+        this.container = container;
+        const nextData = typeof data !== 'undefined' ? data : this.data;
+        this.render(nextData);
     }
 
     render(data: GitData | null) {
@@ -411,9 +434,30 @@ export class HeatmapAnalysisComponent {
                         }
                     }
 
+                    this.persistState();
                     this.renderContent();
                 }
             });
         });
+    }
+
+    private persistState() {
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const vscode = (window as any).vscode;
+            if (!vscode || typeof vscode.getState !== 'function' || typeof vscode.setState !== 'function') {
+                return;
+            }
+            const currentState = vscode.getState() || {};
+            vscode.setState({
+                ...currentState,
+                heatmapView: {
+                    ...(currentState.heatmapView || {}),
+                    activeTab: this.activeTab
+                }
+            });
+        } catch {
+            // 静默忽略持久化状态时的异常
+        }
     }
 }

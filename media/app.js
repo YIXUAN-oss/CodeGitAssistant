@@ -1,5 +1,6 @@
+/// <reference path="./globals.d.ts" />
 /**
- * 主应用类 - 替代 React App 组件
+ * 主应用类
  */
 import { CommandHistoryComponent } from './components/command-history.js';
 import { GitCommandReferenceComponent } from './components/git-command-reference.js';
@@ -20,6 +21,8 @@ export class App {
         this.isLoading = true;
         this.rootElement = null;
         this.gitGraphViewComponent = null;
+        this.timelineViewComponent = null;
+        this.heatmapAnalysisComponent = null;
         this.tabScrollPositions = {};
         // 从持久化状态中恢复上次的标签页
         const savedState = (_a = window.vscode) === null || _a === void 0 ? void 0 : _a.getState();
@@ -59,9 +62,15 @@ export class App {
                 else {
                     this.gitData = Object.assign(Object.assign({}, this.gitData), message.data);
                 }
-                // 对于 git-graph 视图，避免重建整个页面导致滚动丢失，直接局部更新
+                // 对于 git-graph、timeline 和 heatmap 视图，避免重建整个页面导致滚动丢失或闪烁，直接局部更新
                 if (this.activeTab === 'git-graph' && this.gitGraphViewComponent) {
                     this.gitGraphViewComponent.render(this.gitData);
+                }
+                else if (this.activeTab === 'timeline' && this.timelineViewComponent) {
+                    this.timelineViewComponent.render(this.gitData);
+                }
+                else if (this.activeTab === 'heatmap' && this.heatmapAnalysisComponent) {
+                    this.heatmapAnalysisComponent.render(this.gitData);
                 }
                 else {
                     this.render();
@@ -121,7 +130,7 @@ export class App {
         const tabs = [
             { id: 'commands', label: '📋 快捷指令' },
             { id: 'command-ref', label: '📚 Git 指令集' },
-            { id: 'git-graph', label: '📋 Git 视图表' },
+            { id: 'git-graph', label: '🧬 Git 视图表' },
             { id: 'remotes', label: '☁️ 远程仓库' },
             { id: 'branches', label: '🌿 分支管理' },
             { id: 'tags', label: '🏷️ 标签管理' },
@@ -291,16 +300,27 @@ export class App {
         if (this.activeTab === 'timeline') {
             const container = document.getElementById('timeline-view-container');
             if (container) {
-                const component = new TimelineViewComponent('timeline-view-container');
-                component.render(this.gitData);
+                if (!this.timelineViewComponent) {
+                    this.timelineViewComponent = new TimelineViewComponent('timeline-view-container');
+                    this.timelineViewComponent.render(this.gitData);
+                }
+                else {
+                    // 复用实例，重新挂载到新容器并渲染，减少整页重建带来的闪烁
+                    this.timelineViewComponent.remount('timeline-view-container', this.gitData);
+                }
             }
         }
         // 热力图分析组件
         if (this.activeTab === 'heatmap') {
             const container = document.getElementById('heatmap-analysis-container');
             if (container) {
-                const component = new HeatmapAnalysisComponent('heatmap-analysis-container');
-                component.render(this.gitData);
+                if (!this.heatmapAnalysisComponent) {
+                    this.heatmapAnalysisComponent = new HeatmapAnalysisComponent('heatmap-analysis-container');
+                    this.heatmapAnalysisComponent.render(this.gitData);
+                }
+                else {
+                    this.heatmapAnalysisComponent.remount('heatmap-analysis-container', this.gitData);
+                }
             }
         }
     }

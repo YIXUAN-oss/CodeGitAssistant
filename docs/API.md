@@ -17,21 +17,22 @@
 
 #### `GitStatus`
 
-表示 Git 仓库的状态信息。
+表示 Git 仓库的状态信息（封装自 `simple-git` 的 `StatusResult`，并做了补充）。
 
 ```typescript
 interface GitStatus {
     current: string | null;           // 当前分支
     tracking: string | null;          // 跟踪的远程分支
-    ahead: number;                     // 领先远程的提交数
-    behind: number;                    // 落后远程的提交数
-    modified: string[];                // 已修改的文件
-    created: string[];                 // 新创建的文件
-    deleted: string[];                 // 已删除的文件
-    renamed: string[];                 // 已重命名的文件
-    conflicted: string[];              // 冲突的文件
-    staged: string[];                  // 已暂存的文件
-    files: FileStatus[];               // 文件状态详情
+    ahead: number;                    // 领先远程的提交数
+    behind: number;                   // 落后远程的提交数
+    modified: string[];               // 已修改的文件
+    created: string[];                // 新创建的文件
+    deleted: string[];                // 已删除的文件
+    renamed: string[];                // 已重命名的文件
+    conflicted: string[];             // 冲突的文件
+    staged: string[];                 // 已暂存的文件
+    not_added?: string[];             // 未跟踪的文件
+    files: FileStatus[];              // 文件状态详情
 }
 ```
 
@@ -79,6 +80,51 @@ interface TagInfo {
     commit: string;                    // 指向的提交哈希
     message?: string;                  // 标签消息（带注释标签）
     date?: string;                     // 创建日期
+}
+```
+
+#### `CommitInfo`
+
+提交信息（用于日志视图、Git 图等）。
+
+```typescript
+interface CommitInfo {
+    hash: string;                      // 提交哈希
+    date: string;                      // ISO 日期字符串
+    message: string;                   // 提交标题
+    author_name: string;               // 作者姓名
+    author_email: string;              // 作者邮箱
+    body: string;                      // 完整提交消息（多行）
+    refs?: string;                     // 关联引用（分支/标签装饰）
+    parents?: string[];                // 父提交哈希列表
+    branches?: string[];               // 该提交所属的分支列表
+}
+```
+
+#### `GitData`
+
+发送到 Webview 的聚合数据模型，集中承载控制面板所需的所有 Git 信息：
+
+```typescript
+interface GitData {
+    status?: GitStatus;                        // 当前状态
+    branches?: BranchInfo;                     // 分支摘要
+    log?: LogResult;                           // 提交历史（CommitInfo[]）
+    remotes?: RemoteInfo[];                    // 远程仓库
+    conflicts?: string[];                      // 冲突文件路径
+    tags?: TagInfo[];                          // 本地标签
+    remoteTags?: { name: string; commit: string }[];
+    repositoryInfo?: RepositoryInfo;           // 仓库路径/名称
+    branchGraph?: BranchGraphData;             // 分支图 DAG 数据
+    fileStats?: { path: string; count: number }[];              // 文件热力图
+    contributorStats?: { email: string; commits: number; files: number }[]; // 贡献者热力图
+    timeline?: { date: string; count: number }[];               // 提交时间线
+    commandHistory?: CommandHistoryItem[];      // 命令历史
+    availableCommands?: Command[];              // 快捷指令列表
+    categories?: Category[];                    // 快捷指令分类
+    currentBranch?: string | null;              // 当前分支（冗余字段，便于前端使用）
+    commitFiles?: Record<string, CommitFileChange[]>; // 各提交的文件变更
+    commitDetails?: Record<string, CommitInfo>;       // 按需补全的提交详情
 }
 ```
 
@@ -141,17 +187,51 @@ Git 操作的核心服务类，封装了所有 Git 操作。
 
 ##### `getRemotes(forceRefresh?: boolean): Promise<RemoteInfo[]>`
 
-获取远程仓库列表。
+获取远程仓库列表（带缓存）。
 
 - `forceRefresh`: 是否强制刷新（默认 false）
 - 返回: Promise<RemoteInfo[]>
 
 ##### `getTags(forceRefresh?: boolean): Promise<TagInfo[]>`
 
-获取标签列表。
+获取标签列表（本地标签，使用 `git for-each-ref` 批量解析）。
 
 - `forceRefresh`: 是否强制刷新（默认 false）
 - 返回: Promise<TagInfo[]>
+
+##### 其他关键方法（摘要）
+
+> 以下方法在代码中有完整实现，这里只做能力概览：
+
+- `clone(repoUrl: string, targetPath: string): Promise<void>`  
+  克隆远程仓库到指定目录（用于初始化新项目）。
+
+- `cloneIntoWorkspace(repoUrl: string): Promise<void>`  
+  在当前打开的工作区目录中执行 `git clone <repo> .`，适合空文件夹场景。
+
+- `createBranch(branchName: string, checkout?: boolean, startPoint?: string): Promise<void>`  
+  创建分支，可选择是否切换、以及从指定提交/分支起点创建。
+
+- `checkout(branchName: string): Promise<void>`  
+  切换分支，并自动失效状态/分支/日志缓存。
+
+- `canFastForwardMerge(branchName: string): Promise<boolean | null>`  
+  判断当前分支是否可以对 `branchName` 做快进合并。
+
+- `getBranchMergeInfo(branchName: string): Promise<{ canFastForward: boolean | null; commitsAhead: number; commitsBehind: number; hasDiverged: boolean; }>`  
+  计算当前分支与目标分支之间的提交差异，用于合并策略提示。
+
+- `merge(branchName: string, strategy: 'fast-forward' | 'three-way' = 'three-way'): Promise<void>`  
+  执行合并操作，并记录合并历史以供分支图视图使用。
+
+- `deleteBranch(branchName: string, force?: boolean): Promise<void>` / `isBranchMergedIntoCurrent(branchName: string): Promise<boolean>`  
+  删除分支与删除前安全检查（是否已合并）。
+
+- `fileExistsInCommit(commitHash: string, filePath: string): Promise<boolean>`  
+  基于 `git cat-file` 检查某个提交中是否存在指定文件（用于安全打开虚拟文件）。
+
+- `clearBranchGraphCache(): Promise<void>` / `invalidateAllCache(): void`  
+  清空分支图缓存或全部内存缓存，通常在重要 Git 操作后调用。
 
 ## 工具函数
 

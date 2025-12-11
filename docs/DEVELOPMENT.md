@@ -2,7 +2,7 @@
 
 本文档提供 Git Assistant 扩展的详细开发指南。
 
-> **当前版本**：v1.0.1 | **最后更新**：2025-12-03
+> **当前版本**：v1.0.2 | **最后更新**：2025-12-11
 
 ## 📋 目录
 
@@ -50,7 +50,7 @@ npm run watch
 
 ```
 git-assistant/
-├── src/                          # 源代码
+├── src/                          # 扩展端 TypeScript 源码
 │   ├── extension.ts             # 扩展入口
 │   ├── commands/                # 命令处理
 │   │   ├── index.ts            # 命令注册（含 addFiles/commitChanges）
@@ -65,25 +65,9 @@ git-assistant/
 │   │   └── conflict-provider.ts
 │   ├── services/               # 业务服务
 │   │   └── git-service.ts      # Git 服务封装（simple-git）
-│   ├── webview/                # Webview 界面
-│   │   ├── index.tsx           # React 入口
-│   │   ├── globals.d.ts        # VS Code webview 类型声明
-│   │   ├── tsconfig.json       # Webview TS 配置
-│   │   ├── dashboard-panel.ts  # 面板管理（消息处理、并行刷新）
-│   │   └── components/         # React 组件（10 个标签页）
-│   │       ├── App.tsx                     # 主应用 / 标签切换
-│   │       ├── App.css                     # 样式
-│   │       ├── CommandHistory.tsx          # 📋 快捷指令
-│   │       ├── GitCommandReference.tsx     # 📚 Git 指令集
-│   │       ├── BranchTree.tsx              # 🌿 分支管理
-│   │       ├── RemoteManager.tsx           # ☁️ 远程仓库
-│   │       ├── TagManager.tsx              # 🏷️ 标签管理
-│   │       ├── BranchGraph.tsx             # 🌳 分支视图
-│   │       ├── ConflictEditor.tsx          # ⚠️ 冲突解决
-│   │       ├── CommitGraph.tsx             # 📊 2D 提交图谱（高 DPI）
-│   │       ├── TimelineView.tsx            # 📅 时间线
-│   │       ├── HeatmapAnalysis.tsx         # 🔥 热力图
-│   │       └── CommitGraph3D.tsx           # 🧪 3D 提交图谱（实验）
+│   ├── webview/                # Webview 容器
+│   │   ├── dashboard-panel.ts  # 面板管理（创建 Webview、消息处理、并行刷新）
+│   │   └── globals.d.ts        # VS Code webview 类型声明
 │   ├── utils/                  # 工具函数
 │   │   ├── git-utils.ts
 │   │   ├── logger.ts
@@ -93,14 +77,23 @@ git-assistant/
 │   │   └── constants.ts
 │   └── types/                  # 类型定义
 │       └── git.ts
-├── resources/                   # 资源文件（扩展图标）
+├── web/                        # Webview 前端源码（浏览器环境）
+│   ├── app.ts                  # 主应用 / 标签切换
+│   ├── components/             # 10 个标签页组件（命令历史、Git 指令集、Git 视图表等）
+│   ├── styles/                 # Webview 样式（复制到 media/styles）
+│   ├── utils/                  # 主题、Git 图渲染等工具
+│   ├── types/                  # Web 端 git 相关类型
+│   └── index.ts                # Webview 入口脚本
+├── resources/                  # 资源文件（扩展图标、截图）
 │   └── git-icon.svg
-├── dist/                        # Webpack 编译输出
-├── out/                         # VS Code 测试编译输出
-├── package.json                 # 包配置
-├── tsconfig.json               # TypeScript 配置
-├── webpack.config.js           # Webpack 配置
-└── README.md                   # 说明文档
+├── dist/                       # 扩展端打包输出（extension.js）
+├── media/                      # Webview 前端编译输出（由 web/ 生成）
+├── out/                        # VS Code 测试编译输出
+├── package.json                # 包配置
+├── tsconfig.json              # TypeScript 配置
+├── tsconfig.web.json          # Web 前端 TS 配置（rootDir=web, outDir=media）
+├── webpack.config.js          # Webpack 配置（仅打包 extension）
+└── README.md                  # 说明文档
 ```
 
 ## 核心概念
@@ -185,7 +178,16 @@ class BranchProvider implements vscode.TreeDataProvider<BranchTreeItem> {
 
 ### Webview 面板
 
-创建和管理 Webview：
+Webview 由两部分组成：
+
+- 扩展端管理类：`src/webview/dashboard-panel.ts`
+- 前端源码：`web/` 下的 `app.ts` + `components/*` + `styles/*`
+
+**扩展端职责（DashboardPanel）**：
+
+- 创建 Webview 面板（`gitAssistantDashboard`），配置 `enableScripts` 与 `localResourceRoots`
+- 注入 `media/app.js` 与 `media/styles/*.css` 等静态资源
+- 通过 `Promise.allSettled` 并行获取 `status/branches/log/remotes/tags/branchGraph` 等数据，组装为 `GitData` 发送给前端：
 
 ```typescript
 class DashboardPanel {
@@ -199,7 +201,6 @@ class DashboardPanel {
             { enableScripts: true, localResourceRoots: [...] }
         );
 
-        // 处理 Webview 消息
         panel.webview.onDidReceiveMessage(async (message) => {
             switch (message.command) {
                 case 'getData':
@@ -208,12 +209,11 @@ class DashboardPanel {
                 case 'createTag':
                     await vscode.commands.executeCommand('git-assistant.createTag');
                     break;
-                // ... 更多消息
+                // ... 其他消息（刷新、清理缓存等）
             }
         });
     }
 
-    // 并行刷新 Git 数据
     private async _sendGitData() {
         const [statusResult, branchesResult, logResult, remotesResult, tagsResult] =
             await Promise.allSettled([
@@ -223,22 +223,22 @@ class DashboardPanel {
                 this.gitService.getRemotes(),
                 this.gitService.getTags()
             ]);
-        // 组装数据并推送到 Webview
+        // 组装 GitData 并通过 postMessage 发送给 Webview
     }
 }
-
-#### BranchGraph.tsx（🌳 分支视图）
-
-- **职责**：以图形方式呈现分支及其合流路径，是面板中辅助理解多人协作的关键视图。
-- **数据来源**：
-  - 服务端：`dashboard-panel.ts` 在 `Promise.allSettled` 中同时请求 `gitService.getBranches()`、`gitService.getLog()` 与 `merge-history.ts` 的合并记录；
-  - 前端：组件通过 `useEffect` 订阅 `postMessage`，将收到的提交/分支元数据转化为节点与连线。
-- **渲染与交互**：
-  - 使用 D3 力导向布局，支持缩放、拖拽、节点/连线 hover 高亮；
-  - 颜色区分当前分支、远程分支与功能分支；箭头方向代表合并流向；
-  - 点击节点后在侧边栏显示分支详情，并可跳转到相关命令。
-- **容错策略**：当日志或合并数据获取失败时，组件自动降级为“基础分支树”模式，仅展示主干与当前分支，并在头部显示告警，避免整页空白。
 ```
+
+**前端实现（web/）**：
+
+- `web/app.ts`：负责标签切换、保存上次激活的标签页、转发 `GitData` 给各个组件
+- `web/components/*`：每个标签页一个组件（命令历史、Git 指令集、🧬 Git 视图表、远程仓库、分支管理、标签管理、冲突解决、提交图、时间线、热力图）
+- `web/utils/git-graph-renderer.ts`：Git 视图表使用的 DAG 渲染器（SVG），将 `BranchGraphData` 转换为节点/连线
+
+**Git 视图表（🧬 Git 图标签）职责概览**：
+
+- 展示各分支的合流路径和最近 ~800 个提交的拓扑结构（基于 `BranchGraphData.dag`）
+- 高亮当前 HEAD 所在提交，并通过颜色区分普通提交/合并提交/多分支共享提交
+- 支持缩放、平移、展开提交详情，并在按需补全提交详情时避免滚动跳动
 
 ## 开发工作流
 
@@ -414,9 +414,9 @@ class GitService {
 
 ```bash
 # 更新版本号
-npm version patch  # 1.0.1 -> 1.0.2
-npm version minor  # 1.0.1 -> 1.1.0
-npm version major  # 1.0.1 -> 2.0.0
+npm version patch  # 1.0.2 -> 1.0.3
+npm version minor  # 1.0.2 -> 1.1.0
+npm version major  # 1.0.2 -> 2.0.0
 ```
 
 ### 2. 更新文档
@@ -450,7 +450,7 @@ npm install -g @vscode/vsce
 # 打包扩展
 vsce package
 
-# 生成 git-assistant-1.0.1.vsix
+# 生成 git-assistant-1.0.2.vsix
 ```
 
 ### 5. 发布
@@ -469,8 +469,8 @@ vsce publish
 
 ```bash
 # 创建标签
-git tag -a v1.0.1 -m "Release v1.0.1"
-git push origin v1.0.1
+git tag -a v1.0.2 -m "Release v1.0.2"
+git push origin v1.0.2
 
 # 在 GitHub 上创建 Release
 # 上传 .vsix 文件作为附件

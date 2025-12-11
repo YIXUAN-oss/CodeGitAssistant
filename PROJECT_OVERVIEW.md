@@ -3,11 +3,11 @@
 ## 📊 项目统计
 
 - **项目类型**: VS Code 扩展
-- **开发语言**: TypeScript + React 18
-- **核心功能**: Git 可视化管理（分支/远程/标签/冲突/历史）
+- **开发语言**: TypeScript + VS Code Extension API + 原生 Web 前端（DOM/Canvas/SVG）
+- **核心功能**: Git 可视化管理（分支/远程/标签/冲突/历史/Git 图表）
 - **代码行数**: 约 4000+ 行
 - **文件数量**: 35+ 个
-- **开发周期**: v1.0.1（正式版维护中）
+- **开发周期**: v1.0.2（正式版维护中）
 - **最低 VS Code**: 1.80+
 - **最低 Node.js**: 16+
 
@@ -16,7 +16,7 @@
 ```
 CodeGitAssistant/
 │
-├── 📁 src/                          # 源代码目录
+├── 📁 src/                          # 扩展端 TypeScript 源码
 │   ├── extension.ts                 # 扩展入口文件
 │   │
 │   ├── 📁 commands/                 # 命令处理器
@@ -35,25 +35,9 @@ CodeGitAssistant/
 │   │   ├── history-provider.ts     # 提交历史提供者
 │   │   └── conflict-provider.ts    # 冲突检测提供者
 │   │
-│   ├── 📁 webview/                  # Webview可视化界面
-│   │   ├── index.tsx               # React应用入口
-│   │   ├── globals.d.ts            # VS Code webview 类型声明
-│   │   ├── tsconfig.json           # Webview TS配置
-│   │   ├── dashboard-panel.ts      # 控制面板管理
-│   │   └── 📁 components/          # React组件（10个标签页）
-│   │       ├── App.tsx             # 主应用组件 / 标签切换
-│   │       ├── App.css             # 样式文件
-│   │       ├── CommandHistory.tsx  # 📋 快捷指令
-│   │       ├── GitCommandReference.tsx # 📚 Git 指令集
-│   │       ├── BranchTree.tsx      # 🌿 分支管理
-│   │       ├── RemoteManager.tsx   # ☁️ 远程仓库
-│   │       ├── TagManager.tsx      # 🏷️ 标签管理
-│   │       ├── BranchGraph.tsx     # 🌳 分支视图
-│   │       ├── ConflictEditor.tsx  # ⚠️ 冲突解决
-│   │       ├── CommitGraph.tsx     # 📊 2D提交图谱（高DPI优化）
-│   │       ├── TimelineView.tsx    # 📅 时间线（热力图 + 柱状图）
-│   │       ├── HeatmapAnalysis.tsx # 🔥 热力图分析（主题适配）
-│   │       └── CommitGraph3D.tsx   # 🧪 3D提交图谱（实验保留）
+│   ├── 📁 webview/                  # Webview 容器（扩展侧）
+│   │   ├── dashboard-panel.ts      # 控制面板管理（创建 Webview、与前端消息通信）
+│   │   └── globals.d.ts            # VS Code webview 类型声明
 │   │
 │   ├── 📁 utils/                    # 工具函数库
 │   │   ├── git-utils.ts            # Git相关工具函数
@@ -66,7 +50,8 @@ CodeGitAssistant/
 │   └── 📁 types/                    # TypeScript类型定义
 │       └── git.ts                  # Git相关类型
 │
-├── 📁 dist/                         # Webpack 打包后产物
+├── 📁 dist/                         # 扩展端打包产物（extension.js）
+├── 📁 media/                        # Webview 前端编译产物（由 web/ 生成的 .js/.css）
 ├── 📁 docs/                         # 文档目录
 │   ├── DEVELOPMENT.md              # 开发文档
 │   ├── QUICKSTART.md               # 快速开始指南
@@ -97,6 +82,14 @@ CodeGitAssistant/
 ├── 📄 tsconfig.json                # TypeScript配置
 └── 📄 webpack.config.js            # Webpack打包配置
 ```
+
+├── 📁 web/                          # Webview 前端源码（运行在浏览器环境）
+│   ├── app.ts                      # 主应用类（标签切换与消息分发）
+│   ├── 📁 components/              # 10 个标签页对应组件（命令历史、Git 指令集、Git 视图表等）
+│   ├── 📁 styles/                  # Webview 样式（由脚本复制到 media/styles）
+│   ├── 📁 utils/                   # 主题、Git 图渲染器等工具
+│   ├── 📁 types/                   # Web 端 GitData/CommitInfo 类型
+│   └── index.ts                    # Webview 入口脚本
 
 ## 🎯 核心模块说明
 
@@ -172,31 +165,31 @@ class GitService {
 
 ### 5. Webview (可视化界面 + 控制面板)
 
-**目录**: `src/webview/`
+**扩展端目录**: `src/webview/`
+
+**前端源码目录**: `web/`
 
 **技术栈**:
-- React 18 + TypeScript
-- CSS（完全复用 VS Code 主题变量，自动适配明暗色）
-- D3.js（图谱/热力图/时间线）+ Three.js（实验性 3D 图）
+- TypeScript + 原生 DOM/Canvas/SVG
+- CSS（复用 VS Code 主题变量，适配明暗色）
+- Git Graph 渲染器 + D3 工具函数（提交图、热力图、时间线）
 
 **核心文件**:
-- `dashboard-panel.ts`: VS Code Webview 管理，处理消息、与命令交互、并行刷新 Git 数据
-- `App.tsx`: Webview 入口，包含 10 个固定顺序的标签页（120px 宽按钮）
-- `components/*`: 每个标签页一个 React 组件，提供对应操作；`CommitGraph3D.tsx` 作为实验组件按需挂载
+- `src/webview/dashboard-panel.ts`: VS Code Webview 管理，创建面板、注入 `media/` 资源、处理消息并并行刷新 Git 数据
+- `web/app.ts`: Webview 入口 + 10 个固定顺序标签页（120px 宽按钮）的切换逻辑
+- `web/components/*`: 每个标签页一个前端组件（命令历史、Git 指令集、分支管理、远程仓库、标签管理、🧬 Git 视图表、冲突解决、提交图、时间线、热力图）
 
 **标签页一览（默认 10 个）**:
-1. 📋 `CommandHistory.tsx` – 扩展命令历史、复制/重试、清空
-2. 📚 `GitCommandReference.tsx` – 常用 Git 命令学习卡片
-3. 🌿 `BranchTree.tsx` – 分支树、创建/切换/合并
-4. ☁️ `RemoteManager.tsx` – 远程列表、添加/重命名/更新 URL/删除
-5. 🏷️ `TagManager.tsx` – 创建带注释/轻量标签、推送单个/全部、删除
-6. 🌳 `BranchGraph.tsx` – 分支视图可视化
-7. ⚠️ `ConflictEditor.tsx` – 冲突列表与三栏对比解决
-8. 📊 `CommitGraph.tsx` – 高 DPI 2D 提交图谱（D3 力导向图）
-9. 📅 `TimelineView.tsx` – 日历热力图 + 柱状图时间线
-10. 🔥 `HeatmapAnalysis.tsx` – 文件/贡献者热力图
-
-> 🧪 `CommitGraph3D.tsx`：Three.js + React Three Fiber 的 3D 图谱，目前作为可选实验功能，默认未在面板中展示。
+1. 📋 快捷指令 – 扩展命令历史、复制/重试、清空
+2. 📚 Git 指令集 – 常用 Git 命令学习卡片
+3. 🧬 Git 视图表 – 基于 DAG 的 Git 图表视图（当前 HEAD、分支合流路径）
+4. ☁️ 远程仓库 – 远程列表、添加/重命名/更新 URL/删除
+5. 🌿 分支管理 – 分支树、创建/切换/合并
+6. 🏷️ 标签管理 – 创建带注释/轻量标签、推送单个/全部、删除
+7. ⚠️ 冲突解决 – 冲突列表与三栏对比解决
+8. 📊 提交图 – 高 DPI 2D 提交图谱
+9. 📅 时间线 – 日历热力图 + 柱状图时间线
+10. 🔥 热力图 – 文件/贡献者热力图
 
 ### 6. Utils (工具库)
 
@@ -406,9 +399,9 @@ vsce publish        # 发布
 
 **项目状态**: 🟢 活跃开发中
 
-**最后更新**: 2025-12-03
+**最后更新**: 2025-12-11
 
-**当前版本**: v1.0.1
+**当前版本**: v1.0.2
 
 **维护者**: Git Assistant Team
 

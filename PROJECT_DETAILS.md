@@ -372,7 +372,7 @@ private async _sendGitData() {
 | 🌿 分支管理   | `BranchTree.tsx`          | 分支树与操作       | 递归组件 + 状态管理    |
 | ☁️ 远程仓库   | `RemoteManager.tsx`       | 远程仓库 CRUD      | 表单验证 + API 调用    |
 | 🏷️ 标签管理   | `TagManager.tsx`          | 标签创建/推送/删除 | 批量操作 + 进度反馈    |
-| 🌳 分支视图   | `BranchGraph.tsx`         | 分支关系可视化     | D3.js 力导向图         |
+| 🧬 Git 视图表 | `git-graph-view.ts`       | 提交 DAG 图形视图  | 自定义 SVG 图形引擎    |
 | ⚠️ 冲突解决   | `ConflictEditor.tsx`      | 三栏对比编辑器     | 文本解析 + 合并算法    |
 | 📊 提交图     | `CommitGraph.tsx`         | 2D 提交图谱        | Canvas + 高 DPI 渲染   |
 | 📅 时间线     | `TimelineView.tsx`        | 日历热力图         | D3.js + 主题适配       |
@@ -3657,7 +3657,7 @@ vscode.commands.registerCommand('git-assistant.createTag', async () => {
         // 输入标签名称（带验证）
         tagName = await vscode.window.showInputBox({
             prompt: '输入标签名称',
-            placeHolder: 'v1.0.1',
+            placeHolder: 'v1.0.2',
             validateInput: (value) => {
                 if (!value) {
                     return '标签名称不能为空';
@@ -4207,15 +4207,15 @@ private async _handlePushAllTags() {
   - **远程删除**：支持同时删除本地和远程标签，提供选择范围
   - **进度反馈**：推送操作显示进度通知，提升用户体验
 
-##### 🌳 分支视图（BranchGraph.tsx）
+##### 🧬 Git 视图表（git-graph-view.ts & GitGraphRenderer）
 
-- **实现方式**：采用**分层布局算法**（类似 `git log --graph`），而非 D3 力导向图。节点数据来自 `git-service.getBranchGraph()` 的 TTL 缓存。扩展端在刷新控制面板时会调用 `getBranchGraphSnapshot()`，如果本地 workspaceState 中保存着当前 `HEAD` 的 DAG，就直接把缓存推送到 Webview，页面秒级渲染；后台再异步增量刷新。
+- **实现方式**：采用自定义 Git Graph 渲染器（`GitGraphRenderer`，基于 vscode-git-graph 核心算法），在 Webview 中使用 SVG 绘制提交 DAG，不再依赖 D3 力导向图。
 
-- **核心策略**：
-  1. **三层缓存机制**：内存缓存（TTL 10秒） → 持久化缓存（workspaceState） → 增量更新 → 全量重建
-  2. **增量更新策略**：基于祖先关系检测，只拉取 `baseHash..headHash` 范围的增量提交
-  3. **分层布局算法**：拓扑排序分配 Y 坐标（层级），智能轨道分配算法分配 X 坐标（列）
-  4. **LOD 性能优化**：根据缩放级别动态调整节点和标签显示详细程度
+- **数据来源**：扩展端通过 `git-service.getBranchGraph()` 构建 `BranchGraphData`（包含 `dag.nodes` / `dag.links` / `currentBranch`），并在 `dashboard-panel._sendGitData()` 中与 `getLog(800)` 一起推送到 Webview；首屏优先读取 `getBranchGraphSnapshot()` 命中的 workspaceState 持久化缓存，保证大仓库场景下也能秒级拉起。
+
+- **数据补全**：`dashboard-panel._enrichLogWithParents()` 使用分支图 DAG 为 `log.all` 提交补全 `parents` / `branches` 字段，避免原始 `git log` 输出被裁剪导致前端缺少父子关系或分支信息。
+
+- **前端构建**：`GitGraphViewComponent.buildGraphData()` 将 `GitData.log` 与 `branchGraph.dag` 合并为内部的 `CommitNode[]`，并结合当前分支与分支筛选条件（仅查看某一分支）计算需要渲染的提交顺序、合并标记以及当前提交标记。
 
 - **数据获取策略（后端 `git-service.ts`）**：
 
@@ -7644,7 +7644,7 @@ npm run watch-tests
 
 #### 1. 拓扑排序算法 (Topological Sort)
 
-**应用场景**: 分支视图的层级布局（Y 坐标分配）
+**应用场景**: Git 视图表的层级布局（Y 坐标分配）
 
 **算法原理**:
 
@@ -7735,7 +7735,7 @@ nodeLevelMap.forEach((oldLevel, hash) => {
 
 #### 2. 智能轨道分配算法 (Lane Assignment)
 
-**应用场景**: 分支视图的列布局（X 坐标分配）
+**应用场景**: Git 视图表的列布局（X 坐标分配）
 
 **算法原理**:
 
@@ -7860,7 +7860,7 @@ for (let level = 0; level <= maxLevel; level++) {
 
 #### 3. 增量更新算法 (Incremental Update)
 
-**应用场景**: 分支视图的增量数据更新
+**应用场景**: Git 视图表 / 分支图的增量数据更新
 
 **算法原理**:
 
@@ -8002,7 +8002,7 @@ private async isAncestor(
 
 #### 4. LOD 性能优化算法 (Level of Detail)
 
-**应用场景**: 分支视图的缩放性能优化
+**应用场景**: Git 视图表缩放视图下的性能优化
 
 **算法原理**:
 
@@ -8069,7 +8069,7 @@ zoomBehavior.on('zoom', (event: any) => {
 **性能提升**:
 
 - 缩放时帧率从 30fps 提升到 60fps
-- 大仓库（1000+ 节点）下缩放流畅
+- 大仓库下缩放流畅
 
 #### 5. 缓存淘汰算法 (TTL Cache)
 
@@ -8918,7 +8918,7 @@ Git Assistant 项目通过**技术创新**、**用户体验优化**和**架构�
 
 ### 代码质量保证
 
-项目在 v1.0.1 版本中进行了全面的代码质量改进：
+项目在 v1.0.2 版本中进行了全面的代码质量改进：
 
 1. **统一错误处理**: 通过 `ErrorHandler` 类实现统一的错误处理，自动识别 Git 错误类型并提供友好提示
 2. **统一日志系统**: 所有日志通过 `Logger` 记录，支持调试模式，便于问题排查
@@ -8929,7 +8929,7 @@ Git Assistant 项目通过**技术创新**、**用户体验优化**和**架构�
 7. **文档完善**: 新增 API 文档，完善 JSDoc 注释，提高代码可读性
 8. **构建优化**: Webpack 配置优化，支持生产/开发模式区分，代码压缩等
 
-**核心价值**:
+**核心价值**：
 
 1. **提升开发效率**: 通过可视化界面和智能操作，减少 Git 学习成本
 2. **降低操作错误**: 通过安全检查、确认提示、自动检测等机制，避免误操作
@@ -8938,7 +8938,7 @@ Git Assistant 项目通过**技术创新**、**用户体验优化**和**架构�
 5. **代码质量保证**: 通过类型安全、统一错误处理、测试覆盖等机制，确保代码质量
 6. **可维护性**: 通过代码复用、统一接口、完善文档等，提高代码可维护性
 
-**最新优化亮点** (v1.0.1):
+**最新优化亮点** (v1.0.2):
 
 - ✅ **统一错误处理系统**: `ErrorHandler` 类提供统一的错误处理接口，自动识别 Git 错误类型并提供友好提示
 - ✅ **统一日志系统**: 所有日志通过 `Logger` 记录，支持调试模式，输出到 VS Code 输出通道
@@ -9091,7 +9091,7 @@ npm install -g @vscode/vsce
 
 ```json
 {
-  "version": "1.0.1"
+  "version": "1.0.2"
 }
 ```
 
@@ -9101,7 +9101,7 @@ npm install -g @vscode/vsce
 vsce package
 ```
 
-这会生成 `git-assistant-1.0.1.vsix` 文件。
+这会生成 `git-assistant-1.0.2.vsix` 文件。
 
 **4. 验证 VSIX**：
 
@@ -9110,7 +9110,7 @@ vsce package
 vsce ls
 
 # 或手动安装测试
-code --install-extension git-assistant-1.0.1.vsix
+code --install-extension git-assistant-1.0.2.vsix
 ```
 
 ### 发布到 VS Code Marketplace
@@ -9143,15 +9143,15 @@ vsce publish
 **5. 发布特定版本**：
 
 ```bash
-vsce publish 1.0.1
+vsce publish 1.0.2
 ```
 
 **6. 发布补丁版本**：
 
 ```bash
-vsce publish patch  # 1.0.1 -> 1.0.2
-vsce publish minor   # 1.0.1 -> 1.1.0
-vsce publish major   # 1.0.1 -> 2.0.0
+vsce publish patch  # 1.0.2 -> 1.0.3
+vsce publish minor   # 1.0.2 -> 1.1.0
+vsce publish major   # 1.0.2 -> 2.0.0
 ```
 
 ### 发布检查清单
@@ -9163,7 +9163,7 @@ vsce publish major   # 1.0.1 -> 2.0.0
 - [ ] 运行 `npm run package` 确保构建成功
 - [ ] 在扩展开发主机中测试所有功能
 - [ ] 更新 `README.md` 和 `PROJECT_DETAILS.md`（如需要）
-- [ ] 创建 Git 标签：`git tag v1.0.1 && git push --tags`
+- [ ] 创建 Git 标签：`git tag v1.0.2 && git push --tags`
 - [ ] 运行 `vsce package` 生成 VSIX
 - [ ] 验证 VSIX 可以正常安装
 - [ ] 运行 `vsce publish` 发布到 Marketplace

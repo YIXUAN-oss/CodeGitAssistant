@@ -69,6 +69,7 @@ const interpolateYlOrRd = (t) => {
 };
 export class HeatmapAnalysisComponent {
     constructor(containerId) {
+        var _a;
         this.data = null;
         this.activeTab = 'files';
         const container = document.getElementById(containerId);
@@ -76,6 +77,28 @@ export class HeatmapAnalysisComponent {
             throw new Error(`Container ${containerId} not found`);
         }
         this.container = container;
+        // 从 webview 状态中恢复当前子标签（文件修改频率 / 贡献者活跃度）
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const vscode = window.vscode;
+            const state = ((_a = vscode === null || vscode === void 0 ? void 0 : vscode.getState) === null || _a === void 0 ? void 0 : _a.call(vscode)) || {};
+            const heatmapState = state.heatmapView || {};
+            if (heatmapState.activeTab === 'files' || heatmapState.activeTab === 'contributors') {
+                this.activeTab = heatmapState.activeTab;
+            }
+        }
+        catch (_b) {
+            // 忽略在非 webview 环境中访问 vscode API 的错误
+        }
+    }
+    remount(containerId, data) {
+        const container = document.getElementById(containerId);
+        if (!container) {
+            throw new Error(`Container ${containerId} not found`);
+        }
+        this.container = container;
+        const nextData = typeof data !== 'undefined' ? data : this.data;
+        this.render(nextData);
     }
     render(data) {
         this.data = data;
@@ -361,10 +384,25 @@ export class HeatmapAnalysisComponent {
                             contentContainer.innerHTML = '<div id="contributor-heatmap" class="contributor-heatmap"></div>';
                         }
                     }
+                    this.persistState();
                     this.renderContent();
                 }
             });
         });
+    }
+    persistState() {
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const vscode = window.vscode;
+            if (!vscode || typeof vscode.getState !== 'function' || typeof vscode.setState !== 'function') {
+                return;
+            }
+            const currentState = vscode.getState() || {};
+            vscode.setState(Object.assign(Object.assign({}, currentState), { heatmapView: Object.assign(Object.assign({}, (currentState.heatmapView || {})), { activeTab: this.activeTab }) }));
+        }
+        catch (_a) {
+            // 静默忽略持久化状态时的异常
+        }
     }
 }
 //# sourceMappingURL=heatmap-analysis.js.map

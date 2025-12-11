@@ -1,5 +1,7 @@
+/// <reference path="./globals.d.ts" />
+
 /**
- * 主应用类 - 替代 React App 组件
+ * 主应用类 
  */
 
 import { CommandHistoryComponent } from './components/command-history.js';
@@ -24,6 +26,8 @@ export class App {
     private isLoading: boolean = true;
     private rootElement: HTMLElement | null = null;
     private gitGraphViewComponent: GitGraphViewComponent | null = null;
+    private timelineViewComponent: TimelineViewComponent | null = null;
+    private heatmapAnalysisComponent: HeatmapAnalysisComponent | null = null;
     private tabScrollPositions: Partial<Record<TabType, number>> = {};
 
     constructor() {
@@ -68,9 +72,13 @@ export class App {
                         ...message.data
                     };
                 }
-                // 对于 git-graph 视图，避免重建整个页面导致滚动丢失，直接局部更新
+                // 对于 git-graph、timeline 和 heatmap 视图，避免重建整个页面导致滚动丢失或闪烁，直接局部更新
                 if (this.activeTab === 'git-graph' && this.gitGraphViewComponent) {
                     this.gitGraphViewComponent.render(this.gitData);
+                } else if (this.activeTab === 'timeline' && this.timelineViewComponent) {
+                    this.timelineViewComponent.render(this.gitData);
+                } else if (this.activeTab === 'heatmap' && this.heatmapAnalysisComponent) {
+                    this.heatmapAnalysisComponent.render(this.gitData);
                 } else {
                     this.render();
                 }
@@ -138,7 +146,7 @@ export class App {
         const tabs: Array<{ id: TabType; label: string }> = [
             { id: 'commands', label: '📋 快捷指令' },
             { id: 'command-ref', label: '📚 Git 指令集' },
-            { id: 'git-graph', label: '📋 Git 视图表' },
+            { id: 'git-graph', label: '🧬 Git 视图表' },
             { id: 'remotes', label: '☁️ 远程仓库' },
             { id: 'branches', label: '🌿 分支管理' },
             { id: 'tags', label: '🏷️ 标签管理' },
@@ -324,8 +332,13 @@ export class App {
         if (this.activeTab === 'timeline') {
             const container = document.getElementById('timeline-view-container');
             if (container) {
-                const component = new TimelineViewComponent('timeline-view-container');
-                component.render(this.gitData);
+                if (!this.timelineViewComponent) {
+                    this.timelineViewComponent = new TimelineViewComponent('timeline-view-container');
+                    this.timelineViewComponent.render(this.gitData);
+                } else {
+                    // 复用实例，重新挂载到新容器并渲染，减少整页重建带来的闪烁
+                    this.timelineViewComponent.remount('timeline-view-container', this.gitData);
+                }
             }
         }
 
@@ -333,8 +346,12 @@ export class App {
         if (this.activeTab === 'heatmap') {
             const container = document.getElementById('heatmap-analysis-container');
             if (container) {
-                const component = new HeatmapAnalysisComponent('heatmap-analysis-container');
-                component.render(this.gitData);
+                if (!this.heatmapAnalysisComponent) {
+                    this.heatmapAnalysisComponent = new HeatmapAnalysisComponent('heatmap-analysis-container');
+                    this.heatmapAnalysisComponent.render(this.gitData);
+                } else {
+                    this.heatmapAnalysisComponent.remount('heatmap-analysis-container', this.gitData);
+                }
             }
         }
     }

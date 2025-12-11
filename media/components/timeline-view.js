@@ -33,26 +33,72 @@ const getThemeColors = () => {
 };
 export class TimelineViewComponent {
     constructor(containerId) {
+        var _a;
         this.data = null;
         this.selectedYear = new Date().getFullYear();
         this.selectedMonth = new Date().getMonth() + 1;
         this.timelineArrayCache = null;
+        this.hasInteractiveLayout = false;
         const container = document.getElementById(containerId);
         if (!container) {
             throw new Error(`Container ${containerId} not found`);
         }
         this.container = container;
+        // 从 webview 状态中恢复时间线选择的年份与月份
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const vscode = window.vscode;
+            const state = ((_a = vscode === null || vscode === void 0 ? void 0 : vscode.getState) === null || _a === void 0 ? void 0 : _a.call(vscode)) || {};
+            const timelineState = state.timelineView || {};
+            if (typeof timelineState.selectedYear === 'number') {
+                this.selectedYear = timelineState.selectedYear;
+            }
+            if (typeof timelineState.selectedMonth === 'number') {
+                this.selectedMonth = timelineState.selectedMonth;
+            }
+        }
+        catch (_b) {
+            // 忽略在非 webview 环境中访问 vscode API 的错误
+        }
+    }
+    remount(containerId, data) {
+        const container = document.getElementById(containerId);
+        if (!container) {
+            throw new Error(`Container ${containerId} not found`);
+        }
+        this.container = container;
+        this.hasInteractiveLayout = false;
+        const nextData = typeof data !== 'undefined' ? data : this.data;
+        this.render(nextData);
     }
     render(data) {
+        var _a;
         this.data = data;
+        const hasTimeline = !!((_a = this.data) === null || _a === void 0 ? void 0 : _a.timeline);
+        // 没有时间线数据时，直接渲染空状态并重置布局标记
+        if (!hasTimeline) {
+            this.timelineArrayCache = null;
+            this.container.innerHTML = this.getHtml();
+            this.hasInteractiveLayout = false;
+            return;
+        }
+        // 有时间线数据
         this.buildTimelineCaches();
-        this.container.innerHTML = this.getHtml();
-        this.attachEventListeners();
-        // 等待DOM渲染完成后渲染图表和日历
-        setTimeout(() => {
-            this.renderChart();
-            this.renderCalendar();
-        }, 0);
+        // 首次渲染或从空状态切换到有数据时，构建完整布局并绑定事件
+        if (!this.hasInteractiveLayout) {
+            this.container.innerHTML = this.getHtml();
+            this.attachEventListeners();
+            // 等待DOM渲染完成后渲染图表和日历
+            setTimeout(() => {
+                this.renderChart();
+                this.renderCalendar();
+            }, 0);
+            this.hasInteractiveLayout = true;
+            return;
+        }
+        // 已经有布局时，仅更新图表和日历，避免整块 DOM 重建引起闪烁
+        this.renderChart();
+        this.renderCalendar();
     }
     getHtml() {
         var _a;
@@ -125,23 +171,33 @@ export class TimelineViewComponent {
                 <div class="timeline-controls">
                     <div class="control-group">
                         <label>选择年份:</label>
-                        <select class="timeline-select" id="year-select">
-                            ${years.map(year => `
-                                <option value="${year}" ${year === this.selectedYear ? 'selected' : ''}>
-                                    ${year}
-                                </option>
-                            `).join('')}
-                        </select>
+                        <div id="timeline-year-dropdown" class="dropdown loaded">
+                            <div class="dropdownCurrentValue" data-value="${this.selectedYear}">
+                                ${this.selectedYear}年
+                            </div>
+                            <div class="dropdownMenu">
+                                ${years.map(year => `
+                                    <div class="dropdownOption ${year === this.selectedYear ? 'selected' : ''}" data-value="${year}">
+                                        ${year}年
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
                     </div>
                     <div class="control-group">
                         <label>选择月份:</label>
-                        <select class="timeline-select" id="month-select">
-                            ${months.map(month => `
-                                <option value="${month.value}" ${month.value === this.selectedMonth ? 'selected' : ''}>
-                                    ${month.label}
-                                </option>
-                            `).join('')}
-                        </select>
+                        <div id="timeline-month-dropdown" class="dropdown loaded">
+                            <div class="dropdownCurrentValue" data-value="${this.selectedMonth}">
+                                ${this.selectedMonth}月
+                            </div>
+                            <div class="dropdownMenu">
+                                ${months.map(month => `
+                                    <div class="dropdownOption ${month.value === this.selectedMonth ? 'selected' : ''}" data-value="${month.value}">
+                                        ${month.label}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -150,7 +206,6 @@ export class TimelineViewComponent {
     getChartHtml() {
         return `
             <div class="timeline-chart-container">
-                <div class="chart-title">每日提交统计</div>
                 <svg class="chart-svg" id="timeline-chart"></svg>
             </div>
         `;
@@ -503,6 +558,7 @@ export class TimelineViewComponent {
         if (yearSelect) {
             yearSelect.addEventListener('change', () => {
                 this.selectedYear = parseInt(yearSelect.value);
+                this.persistState();
                 this.renderChart();
                 this.renderCalendar();
             });
@@ -510,9 +566,134 @@ export class TimelineViewComponent {
         if (monthSelect) {
             monthSelect.addEventListener('change', () => {
                 this.selectedMonth = parseInt(monthSelect.value);
+                this.persistState();
                 this.renderChart();
                 this.renderCalendar();
             });
+        }
+        // 自定义年份下拉
+        const yearDropdown = this.container.querySelector('#timeline-year-dropdown');
+        if (yearDropdown && !yearDropdown._timelineBound) {
+            yearDropdown._timelineBound = true;
+            const currentValueElem = yearDropdown.querySelector('.dropdownCurrentValue');
+            const menuElem = yearDropdown.querySelector('.dropdownMenu');
+            if (currentValueElem) {
+                currentValueElem.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    yearDropdown.classList.toggle('dropdownOpen');
+                });
+            }
+            if (menuElem) {
+                menuElem.addEventListener('click', (event) => {
+                    const target = event.target;
+                    if (!target)
+                        return;
+                    const optionElem = target.closest('.dropdownOption');
+                    if (!optionElem)
+                        return;
+                    const value = optionElem.getAttribute('data-value');
+                    if (!value)
+                        return;
+                    const year = parseInt(value, 10);
+                    if (isNaN(year))
+                        return;
+                    this.selectedYear = year;
+                    if (currentValueElem) {
+                        currentValueElem.setAttribute('data-value', String(year));
+                        currentValueElem.textContent = `${year}年`;
+                    }
+                    const options = menuElem.querySelectorAll('.dropdownOption');
+                    options.forEach(opt => {
+                        if (opt.getAttribute('data-value') === value) {
+                            opt.classList.add('selected');
+                        }
+                        else {
+                            opt.classList.remove('selected');
+                        }
+                    });
+                    this.persistState();
+                    this.renderChart();
+                    this.renderCalendar();
+                    yearDropdown.classList.remove('dropdownOpen');
+                });
+            }
+            window.addEventListener('click', (event) => {
+                const target = event.target;
+                if (!target)
+                    return;
+                if (!yearDropdown.contains(target)) {
+                    yearDropdown.classList.remove('dropdownOpen');
+                }
+            });
+        }
+        // 自定义月份下拉
+        const monthDropdown = this.container.querySelector('#timeline-month-dropdown');
+        if (monthDropdown && !monthDropdown._timelineBound) {
+            monthDropdown._timelineBound = true;
+            const currentValueElem = monthDropdown.querySelector('.dropdownCurrentValue');
+            const menuElem = monthDropdown.querySelector('.dropdownMenu');
+            if (currentValueElem) {
+                currentValueElem.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    monthDropdown.classList.toggle('dropdownOpen');
+                });
+            }
+            if (menuElem) {
+                menuElem.addEventListener('click', (event) => {
+                    const target = event.target;
+                    if (!target)
+                        return;
+                    const optionElem = target.closest('.dropdownOption');
+                    if (!optionElem)
+                        return;
+                    const value = optionElem.getAttribute('data-value');
+                    if (!value)
+                        return;
+                    const month = parseInt(value, 10);
+                    if (isNaN(month))
+                        return;
+                    this.selectedMonth = month;
+                    if (currentValueElem) {
+                        currentValueElem.setAttribute('data-value', String(month));
+                        currentValueElem.textContent = `${month}月`;
+                    }
+                    const options = menuElem.querySelectorAll('.dropdownOption');
+                    options.forEach(opt => {
+                        if (opt.getAttribute('data-value') === value) {
+                            opt.classList.add('selected');
+                        }
+                        else {
+                            opt.classList.remove('selected');
+                        }
+                    });
+                    this.persistState();
+                    this.renderChart();
+                    this.renderCalendar();
+                    monthDropdown.classList.remove('dropdownOpen');
+                });
+            }
+            window.addEventListener('click', (event) => {
+                const target = event.target;
+                if (!target)
+                    return;
+                if (!monthDropdown.contains(target)) {
+                    monthDropdown.classList.remove('dropdownOpen');
+                }
+            });
+        }
+    }
+    persistState() {
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const vscode = window.vscode;
+            if (!vscode || typeof vscode.getState !== 'function' || typeof vscode.setState !== 'function') {
+                return;
+            }
+            const currentState = vscode.getState() || {};
+            vscode.setState(Object.assign(Object.assign({}, currentState), { timelineView: Object.assign(Object.assign({}, (currentState.timelineView || {})), { selectedYear: this.selectedYear, selectedMonth: this.selectedMonth }) }));
+        }
+        catch (_a) {
+            // 静默忽略持久化状态时的异常
         }
     }
 }
