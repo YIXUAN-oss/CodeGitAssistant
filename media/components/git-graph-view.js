@@ -227,6 +227,9 @@ export class GitGraphViewComponent {
         this.expandedCommit = null;
         this.detailHeight = 0;
         this.scrollAnchor = null;
+        // 顶部工具栏状态：分支筛选 & 是否显示远程分支
+        this.branchFilter = '__all__';
+        this.showRemoteBranches = true;
         // DOM 引用
         this.containerRef = null;
         this.headerRef = null;
@@ -251,7 +254,7 @@ export class GitGraphViewComponent {
         this.renderTimeoutRef = null;
         this.renderFrameRef = null;
         this.isRenderingRef = false;
-        this.lastRenderDataRef = { commitNodesLength: 0, expandedCommit: null, detailHeight: 0 };
+        this.lastRenderDataRef = { commitNodesLength: 0, expandedCommit: null, detailHeight: 0, branchFilter: '__all__', showRemoteBranches: true };
         this.prevVisibleRangeRef = { start: 0, end: 0 };
         // 定时器引用
         this.scrollTimeoutRef = null;
@@ -324,6 +327,12 @@ export class GitGraphViewComponent {
         }
         if (typeof graphState.selectedCommit === 'string') {
             this.selectedCommit = graphState.selectedCommit;
+        }
+        if (typeof graphState.branchFilter === 'string') {
+            this.branchFilter = graphState.branchFilter;
+        }
+        if (typeof graphState.showRemoteBranches === 'boolean') {
+            this.showRemoteBranches = graphState.showRemoteBranches;
         }
         this.lastSavedState = {
             scrollTop: this.scrollTop,
@@ -538,6 +547,79 @@ export class GitGraphViewComponent {
             // 使用 setTimeout 确保 DOM 完全渲染后再渲染 SVG
             setTimeout(() => {
                 this.renderGraph();
+            }, 0);
+            // 初始化顶部工具栏控件的状态与事件（在 DOM 渲染完成后）
+            setTimeout(() => {
+                const dropdown = this.container.querySelector('#gg-branch-dropdown');
+                if (dropdown && !dropdown._gitGraphBound) {
+                    dropdown._gitGraphBound = true;
+                    const currentValueElem = dropdown.querySelector('.dropdownCurrentValue');
+                    const menuElem = dropdown.querySelector('.dropdownMenu');
+                    // 切换下拉展开 / 收起
+                    if (currentValueElem) {
+                        currentValueElem.addEventListener('click', (event) => {
+                            event.stopPropagation();
+                            dropdown.classList.toggle('dropdownOpen');
+                        });
+                    }
+                    // 选项点击
+                    if (menuElem) {
+                        menuElem.addEventListener('click', (event) => {
+                            const target = event.target;
+                            if (!target)
+                                return;
+                            const optionElem = target.closest('.dropdownOption');
+                            if (!optionElem)
+                                return;
+                            const value = optionElem.getAttribute('data-value') || '__all__';
+                            this.branchFilter = value;
+                            // 更新当前显示文本
+                            if (currentValueElem) {
+                                currentValueElem.setAttribute('data-value', value);
+                                const label = value === '__all__' ? 'Show All' : value;
+                                currentValueElem.textContent = label;
+                            }
+                            // 更新选中样式
+                            const options = menuElem.querySelectorAll('.dropdownOption');
+                            options.forEach(opt => {
+                                if (opt.getAttribute('data-value') === value) {
+                                    opt.classList.add('selected');
+                                }
+                                else {
+                                    opt.classList.remove('selected');
+                                }
+                            });
+                            this.saveState();
+                            // 通知后端更新 Git Graph 过滤状态
+                            try {
+                                const vscodeApi = window.vscode;
+                                if (vscodeApi && typeof vscodeApi.postMessage === 'function') {
+                                    vscodeApi.postMessage({
+                                        command: 'setGitGraphFilter',
+                                        branchFilter: this.branchFilter === '__all__' ? null : this.branchFilter,
+                                        showRemoteBranches: this.showRemoteBranches
+                                    });
+                                }
+                            }
+                            catch (_a) {
+                                // 忽略 Webview 上下文中可能不存在 vscode API 的情况
+                            }
+                            dropdown.classList.remove('dropdownOpen');
+                            if (this.data) {
+                                this.render(this.data);
+                            }
+                        });
+                    }
+                    // 点击外部时关闭下拉
+                    window.addEventListener('click', (event) => {
+                        const target = event.target;
+                        if (!target)
+                            return;
+                        if (!dropdown.contains(target)) {
+                            dropdown.classList.remove('dropdownOpen');
+                        }
+                    });
+                }
             }, 0);
         }
         finally {
@@ -936,6 +1018,51 @@ export class GitGraphViewComponent {
         }
     }
     /**
+     * 计算某个分支可到达的提交集合（用于分支筛选）
+     * 行为参考 vscode-git-graph：
+     *  - 选择某个分支后，显示该分支及其历史上的提交（顺着父指针向下遍历）
+     */
+    getBranchReachableHashes(branchName) {
+        const reachable = new Set();
+        if (!this.dagRef || !this.dagRef.nodes || this.dagRef.nodes.length === 0) {
+            return reachable;
+        }
+        // 构建 hash -> dag node 映射，便于快速查找父提交
+        const nodeMap = new Map();
+        this.dagRef.nodes.forEach((n) => {
+            nodeMap.set(n.hash, n);
+        });
+        // 找到所有包含该分支名的节点，作为起点（HEAD 以及可能的其他 ref）
+        const stack = [];
+        this.dagRef.nodes.forEach((n) => {
+            if (n.branches && n.branches.includes(branchName)) {
+                stack.push(n.hash);
+            }
+        });
+        // 如果 dag 中没有显式标记该分支，退回到 commitsRef 中查找
+        if (stack.length === 0 && this.commitsRef && this.commitsRef.length > 0) {
+            const headFromLog = this.commitsRef.find(c => c.branches && c.branches.includes(branchName));
+            if (headFromLog) {
+                stack.push(headFromLog.hash);
+            }
+        }
+        // 沿父提交向下遍历，收集所有可达提交
+        while (stack.length > 0) {
+            const hash = stack.pop();
+            if (reachable.has(hash))
+                continue;
+            reachable.add(hash);
+            const node = nodeMap.get(hash);
+            const parents = (node === null || node === void 0 ? void 0 : node.parents) || [];
+            for (const parent of parents) {
+                if (!reachable.has(parent)) {
+                    stack.push(parent);
+                }
+            }
+        }
+        return reachable;
+    }
+    /**
      * 获取可见范围（虚拟滚动）- 基于给定的 scrollTop
      * 用于在滚动事件中计算新的可见范围，不需要更新状态
      */
@@ -988,11 +1115,21 @@ export class GitGraphViewComponent {
             `;
         }
         const visibleRange = this.getVisibleRange();
+        // 根据分支筛选计算可见的提交集合（仅影响表格行，不修改底层 DAG / SVG）
+        const branchFilteredHashes = this.branchFilter === '__all__'
+            ? null
+            : this.getBranchReachableHashes(this.branchFilter);
         const visibleCommits = this.commitNodes.slice(visibleRange.start, visibleRange.end);
         const expandedIndex = this.expandedCommit ? this.getCommitIndex(this.expandedCommit) : -1;
         const expandedVisible = expandedIndex >= visibleRange.start && expandedIndex < visibleRange.end;
         const extraHeight = expandedVisible ? Math.max(this.detailHeight, ROW_HEIGHT) : 0;
-        const totalHeight = this.commitNodes.length * ROW_HEIGHT + extraHeight;
+        // 根据分支筛选计算实际需要显示的行数，用于控制表格区域的总高度
+        const effectiveRowCount = branchFilteredHashes
+            ? this.commitNodes.filter(c => branchFilteredHashes.has(c.hash)).length
+            : this.commitNodes.length;
+        // 表格和图形区域总高度都按当前需要显示的行数计算，避免分支筛选后底部出现大量空白
+        const tableTotalHeight = effectiveRowCount * ROW_HEIGHT + extraHeight;
+        const graphTotalHeight = tableTotalHeight;
         const currentBranchName = this.currentBranchRef;
         // 当前检出提交（支持分离 HEAD）
         let commitHead = null;
@@ -1013,9 +1150,32 @@ export class GitGraphViewComponent {
         }
         const topPadding = visibleRange.start * ROW_HEIGHT;
         const renderedHeight = visibleCommits.length * ROW_HEIGHT + extraHeight;
-        const bottomPadding = Math.max(totalHeight - topPadding - renderedHeight, 0);
+        const bottomPadding = Math.max(tableTotalHeight - topPadding - renderedHeight, 0);
+        // 分支列表（用于顶部工具栏的下拉选择）
+        const allBranches = this.getBranches();
+        const currentBranchFilterLabel = this.branchFilter === '__all__'
+            ? 'Show All'
+            : this.branchFilter;
         return `
             <div class="git-graph-view" style="height: 100%; display: flex; flex-direction: column; font-size: 14px;">
+                <div class="git-graph-toolbar">
+                    <div class="git-graph-toolbar-center">
+                        <label class="git-graph-toolbar-item">
+                            <span class="git-graph-toolbar-label">Branches:</span>
+                            <div id="gg-branch-dropdown" class="dropdown loaded">
+                                <div class="dropdownCurrentValue" data-value="${escapeHtml(this.branchFilter)}">
+                                    ${escapeHtml(currentBranchFilterLabel)}
+                                </div>
+                                <div class="dropdownMenu">
+                                    <div class="dropdownOption ${this.branchFilter === '__all__' ? 'selected' : ''}" data-value="__all__">Show All</div>
+                                    ${allBranches.map(b => `
+                                        <div class="dropdownOption ${this.branchFilter === b ? 'selected' : ''}" data-value="${escapeHtml(b)}">${escapeHtml(b)}</div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
                 <div
                     id="commitTable"
                     class="autoLayout"
@@ -1023,7 +1183,7 @@ export class GitGraphViewComponent {
                 >
                     <svg
                         id="commitGraph"
-                        style="position: absolute; left: 0; top: ${this.headerHeight}px; width: ${GRAPH_COLUMN_WIDTH}px; height: ${totalHeight}px; pointer-events: none; z-index: 2; will-change: contents; transform: translateZ(0); backface-visibility: hidden; opacity: 1; visibility: visible;"
+                        style="position: absolute; left: 0; top: ${this.headerHeight}px; width: ${GRAPH_COLUMN_WIDTH}px; height: ${graphTotalHeight}px; pointer-events: none; z-index: 2; will-change: contents; transform: translateZ(0); backface-visibility: hidden; opacity: 1; visibility: visible;"
                     ></svg>
                     <table style="width: 100%; border-collapse: collapse; position: relative; z-index: 3;">
                         <thead style="position: sticky; top: 0; z-index: 20; background: var(--vscode-sideBar-background); isolation: isolate;">
@@ -1046,10 +1206,13 @@ export class GitGraphViewComponent {
             const parents = commit.parents || [];
             const commitIndex = this.getCommitIndex(commit.hash);
             const isMuted = commitIndex >= 0 && this.mutedCommits[commitIndex];
+            const matchesBranchFilter = branchFilteredHashes
+                ? branchFilteredHashes.has(commit.hash)
+                : true;
             const isExpanded = this.expandedCommit === commit.hash;
             return `
                                     <tr
-                                        class="commit${isCurrent ? ' current' : ''}${this.selectedCommit === commit.hash ? ' selected' : ''}${isMuted ? ' mute' : ''}${isExpanded ? ' commit-details-open' : ''}"
+                                        class="commit${isCurrent ? ' current' : ''}${this.selectedCommit === commit.hash ? ' selected' : ''}${isMuted ? ' mute' : ''}${isExpanded ? ' commit-details-open' : ''}${matchesBranchFilter ? '' : ' branch-filter-excluded'}"
                                             data-commit-hash="${escapeHtml(commit.hash)}"
                                         style="height: ${ROW_HEIGHT}px;"
                                     >
@@ -1174,7 +1337,10 @@ export class GitGraphViewComponent {
     renderDescription(commit, fullCommit, isCurrent, displayMessage) {
         const refInfo = this.getRefInfo(commit, fullCommit);
         const maxRefDisplay = 6;
-        const branchLabels = refInfo.branches.slice(0, maxRefDisplay).map(branch => this.renderBranchLabel(branch, commit.colorIndex, commit.hash)).join('');
+        const visibleBranches = this.showRemoteBranches
+            ? refInfo.branches
+            : refInfo.branches.filter(b => !b.startsWith('remotes/'));
+        const branchLabels = visibleBranches.slice(0, maxRefDisplay).map(branch => this.renderBranchLabel(branch, commit.colorIndex, commit.hash)).join('');
         const tagLabels = refInfo.tags.slice(0, maxRefDisplay).map(tag => this.renderTagLabel(tag, commit.colorIndex)).join('');
         const extraBranchCount = Math.max(refInfo.branches.length - maxRefDisplay, 0);
         const extraTagCount = Math.max(refInfo.tags.length - maxRefDisplay, 0);
@@ -1270,20 +1436,53 @@ export class GitGraphViewComponent {
             <div class="cdv-files">
                 ${files.map(file => {
             const statusLabel = file.status || '';
-            const stats = [
-                typeof file.additions === 'number' ? `+${file.additions}` : '',
-                typeof file.deletions === 'number' ? `-${file.deletions}` : ''
-            ].filter(Boolean).join(' ');
+            const additions = typeof file.additions === 'number' ? file.additions : undefined;
+            const deletions = typeof file.deletions === 'number' ? file.deletions : undefined;
+            const statusUpper = (file.status || '').trim().toUpperCase();
+            const isDeleted = statusUpper.startsWith('D');
+            const changeType = (file.type || statusUpper.charAt(0) || '').trim().toUpperCase();
+            const oldPath = file.oldPath || '';
+            const newPath = file.newPath || file.path;
+            // 根据状态决定“查看文件”按钮的行为：
+            // - 删除(D) 等在当前提交中不存在的文件，不再提供直接查看当前版本的按钮
+            //   改为提示文本，用户可以通过“查看差异”查看父版本内容
+            const openButtonHtml = isDeleted
+                ? `<span class="cdv-file-open-disabled" title="该文件在此提交中已删除，仅可通过差异查看父版本">文件已删除</span>`
+                : `<button class="link cdv-file-btn" data-action="open" data-commit-hash="${escapeHtml(_commit.hash)}" data-file-path="${escapeHtml(newPath)}">查看文件</button>`;
             return `
-                        <div class="cdv-file-row" data-file-path="${escapeHtml(file.path)}">
+                        <div
+                            class="cdv-file-row"
+                            data-file-path="${escapeHtml(newPath)}"
+                            data-file-status="${escapeHtml(file.status || '')}"
+                            data-commit-hash="${escapeHtml(_commit.hash)}"
+                            data-parent-hash="${escapeHtml(parentHash)}"
+                            data-old-path="${escapeHtml(oldPath)}"
+                            data-new-path="${escapeHtml(newPath)}"
+                            data-change-type="${escapeHtml(changeType)}"
+                        >
                             <div class="cdv-file-meta">
                                 <span class="cdv-file-status">${escapeHtml(statusLabel)}</span>
-                                <span class="cdv-file-path" title="${escapeHtml(file.path)}">${escapeHtml(file.path)}</span>
-                                ${stats ? `<span class="cdv-file-stats">${escapeHtml(stats)}</span>` : ''}
+                                <span class="cdv-file-path" title="${escapeHtml(newPath)}">${escapeHtml(newPath)}</span>
+                                ${additions || deletions ? `
+                                    <span class="cdv-file-stats">
+                                        ${typeof additions === 'number' ? `<span class="cdv-file-stats-add">+${additions}</span>` : ''}
+                                        ${typeof deletions === 'number' ? `<span class="cdv-file-stats-del">-${deletions}</span>` : ''}
+                                    </span>
+                                ` : ''}
                             </div>
                             <div class="cdv-file-actions">
-                                <button class="link cdv-file-btn" data-action="diff" data-commit-hash="${escapeHtml(_commit.hash)}" data-parent-hash="${escapeHtml(parentHash)}" data-file-path="${escapeHtml(file.path)}" data-file-status="${escapeHtml(file.status)}">查看差异</button>
-                                <button class="link cdv-file-btn" data-action="open" data-commit-hash="${escapeHtml(_commit.hash)}" data-file-path="${escapeHtml(file.path)}">查看文件</button>
+                                <button
+                                    class="link cdv-file-btn"
+                                    data-action="diff"
+                                    data-commit-hash="${escapeHtml(_commit.hash)}"
+                                    data-parent-hash="${escapeHtml(parentHash)}"
+                                    data-file-path="${escapeHtml(newPath)}"
+                                    data-file-status="${escapeHtml(file.status || '')}"
+                                    data-old-path="${escapeHtml(oldPath)}"
+                                    data-new-path="${escapeHtml(newPath)}"
+                                    data-change-type="${escapeHtml(changeType)}"
+                                >查看差异</button>
+                                ${openButtonHtml}
                             </div>
                         </div>
                     `;
@@ -1512,16 +1711,14 @@ export class GitGraphViewComponent {
                 if (hash) {
                     // 滚动到该提交并展开
                     this.scrollToCommit(hash, true);
-                    setTimeout(() => {
-                        this.handleCommitClick(hash);
-                    }, 300);
+                    this.handleCommitClick(hash);
                 }
                 return;
             }
             // 检查是否是详情行内容
             const detailContent = target.closest('#cdvContent, #cdvSummary, #cdvFiles, #cdvControls, .cdvHeightResize');
             if (detailContent) {
-                // 文件列表动作
+                // 文件列表动作（按钮）
                 const fileBtn = target.closest('.cdv-file-btn');
                 if (fileBtn) {
                     const action = fileBtn.dataset.action;
@@ -1529,17 +1726,38 @@ export class GitGraphViewComponent {
                     const filePath = fileBtn.dataset.filePath;
                     let parentHash = fileBtn.dataset.parentHash || '';
                     const fileStatus = (fileBtn.dataset.fileStatus || '').trim().toUpperCase();
+                    const oldPath = fileBtn.dataset.oldPath || '';
+                    const newPath = fileBtn.dataset.newPath || filePath || '';
+                    const changeType = (fileBtn.dataset.changeType || '').trim().toUpperCase();
                     if (hash && action) {
                         if (action === 'diff' && filePath) {
                             // 对于新增(A)或未追踪(U)的文件，父版本应视为空
                             if (fileStatus.startsWith('A') || fileStatus.startsWith('U')) {
-                                parentHash = 'EMPTY'; // 使用一个特殊标记，而不是直接用哈希
+                                parentHash = 'EMPTY';
                             }
-                            this.requestOpenFileDiff(hash, parentHash, filePath);
+                            this.requestOpenFileDiff(hash, parentHash, filePath, oldPath, newPath, changeType);
                         }
                         else if (action === 'open' && filePath) {
                             this.requestOpenFileAtRevision(hash, filePath);
                         }
+                    }
+                    return;
+                }
+                // 点击文件行（非按钮区域）时，默认触发 diff 行为
+                const fileRow = target.closest('.cdv-file-row');
+                if (fileRow) {
+                    const hash = fileRow.dataset.commitHash;
+                    const filePath = fileRow.dataset.filePath;
+                    let parentHash = fileRow.dataset.parentHash || '';
+                    const fileStatus = (fileRow.dataset.fileStatus || '').trim().toUpperCase();
+                    const oldPath = fileRow.dataset.oldPath || '';
+                    const newPath = fileRow.dataset.newPath || filePath || '';
+                    const changeType = (fileRow.dataset.changeType || '').trim().toUpperCase();
+                    if (hash && filePath) {
+                        if (fileStatus.startsWith('A') || fileStatus.startsWith('U')) {
+                            parentHash = 'EMPTY';
+                        }
+                        this.requestOpenFileDiff(hash, parentHash, filePath, oldPath, newPath, changeType);
                     }
                     return;
                 }
@@ -2021,7 +2239,9 @@ export class GitGraphViewComponent {
         const nextState = Object.assign(Object.assign({}, state), { gitGraphView: {
                 scrollTop: this.scrollTop,
                 expandedCommit: this.expandedCommit,
-                selectedCommit: this.selectedCommit
+                selectedCommit: this.selectedCommit,
+                branchFilter: this.branchFilter,
+                showRemoteBranches: this.showRemoteBranches
             } });
         (_b = vscode === null || vscode === void 0 ? void 0 : vscode.setState) === null || _b === void 0 ? void 0 : _b.call(vscode, nextState);
     }
@@ -2280,16 +2500,19 @@ export class GitGraphViewComponent {
     /**
      * 请求打开文件差异
      */
-    requestOpenFileDiff(commitHash, parentHash, filePath) {
+    requestOpenFileDiff(commitHash, parentHash, filePath, oldPath, newPath, changeType) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const vscode = window.vscode;
         if (vscode) {
-            // 直接将 parentHash（可能是 'EMPTY' 标记）发送给后端
+            // 直接将 parentHash（可能是 'EMPTY' 标记）发送给后端，并携带重命名/复制信息
             vscode.postMessage({
                 command: 'openCommitDiff',
                 commitHash,
-                parentHash: parentHash, // 直接发送，不再转换
-                filePath
+                parentHash,
+                filePath,
+                oldPath,
+                newPath,
+                changeType
             });
         }
     }
@@ -2319,12 +2542,16 @@ export class GitGraphViewComponent {
         const currentData = {
             commitNodesLength: this.commitNodes.length,
             expandedCommit: this.expandedCommit,
-            detailHeight: this.detailHeight
+            detailHeight: this.detailHeight,
+            branchFilter: this.branchFilter,
+            showRemoteBranches: this.showRemoteBranches
         };
         const lastData = this.lastRenderDataRef;
         const dataChanged = currentData.commitNodesLength !== lastData.commitNodesLength ||
             currentData.expandedCommit !== lastData.expandedCommit ||
-            Math.abs(currentData.detailHeight - lastData.detailHeight) > 1;
+            Math.abs(currentData.detailHeight - lastData.detailHeight) > 1 ||
+            currentData.branchFilter !== lastData.branchFilter ||
+            currentData.showRemoteBranches !== lastData.showRemoteBranches;
         // 如果 SVG 元素不存在内容（刚创建），必须渲染
         const svgIsEmpty = !svg.innerHTML || svg.innerHTML.trim() === '';
         if (!dataChanged && lastData.commitNodesLength > 0 && !svgIsEmpty) {
@@ -2332,7 +2559,13 @@ export class GitGraphViewComponent {
         }
         if (this.commitNodes.length === 0) {
             svg.innerHTML = '';
-            this.lastRenderDataRef = { commitNodesLength: 0, expandedCommit: null, detailHeight: 0 };
+            this.lastRenderDataRef = {
+                commitNodesLength: 0,
+                expandedCommit: null,
+                detailHeight: 0,
+                branchFilter: this.branchFilter,
+                showRemoteBranches: this.showRemoteBranches
+            };
             return;
         }
         // 更新渲染器配置（基于当前表头高度）
@@ -2371,6 +2604,14 @@ export class GitGraphViewComponent {
                 parents: node.parents || []
             };
         });
+        // 如果启用了分支筛选，仅保留该分支可到达的提交
+        let commitsForGraph = commits;
+        if (this.branchFilter !== '__all__') {
+            const reachable = this.getBranchReachableHashes(this.branchFilter);
+            if (reachable.size > 0) {
+                commitsForGraph = commits.filter(c => reachable.has(c.hash));
+            }
+        }
         // 获取当前分支的 HEAD commit hash
         // 需要找到当前分支指向的 commit hash
         let commitHead = null;
@@ -2396,9 +2637,17 @@ export class GitGraphViewComponent {
             }
         }
         // 加载提交到渲染器
-        this.graphRenderer.loadCommits(commits, commitHead);
+        this.graphRenderer.loadCommits(commitsForGraph, commitHead);
         // 渲染 SVG
         this.graphRenderer.render(svg, expandedIndex);
+        // 记录最新的渲染数据快照
+        this.lastRenderDataRef = {
+            commitNodesLength: this.commitNodes.length,
+            expandedCommit: this.expandedCommit,
+            detailHeight: this.detailHeight,
+            branchFilter: this.branchFilter,
+            showRemoteBranches: this.showRemoteBranches
+        };
         // 添加交互事件到提交节点
         const circles = svg.querySelectorAll('circle[data-commit-hash]');
         circles.forEach(circle => {

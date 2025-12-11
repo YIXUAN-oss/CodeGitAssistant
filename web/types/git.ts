@@ -44,6 +44,9 @@ export interface CommitFileChange {
     additions?: number;
     deletions?: number;
     changes?: number;
+    oldPath?: string;
+    newPath?: string;
+    type?: string;
 }
 
 export interface CommitInfo {

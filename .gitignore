@@ -7,6 +7,5 @@ dist
 .DS_Store
 *.log
 
-# 排除参考项目文件夹
-vscode-git-graph-develop/
+
 

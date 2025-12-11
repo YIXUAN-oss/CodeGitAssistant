@@ -607,6 +607,26 @@ export class GitService {
     }
 
     /**
+     * 检查在指定提交中是否存在某个文件（基于 git cat-file）
+     * 用于在通过 git 虚拟文件系统打开文件前做安全检查，避免 VS Code 抛出底层错误
+     */
+    async fileExistsInCommit(commitHash: string, filePath: string): Promise<boolean> {
+        if (!commitHash || !filePath) {
+            return false;
+        }
+
+        try {
+            const git = this.ensureGit();
+            const objectSpec = `${commitHash}:${filePath.replace(/\\/g, '/')}`;
+            await git.raw(['cat-file', '-e', objectSpec]);
+            return true;
+        } catch (error) {
+            ErrorHandler.handleSilent(error, '检查提交中文件是否存在');
+            return false;
+        }
+    }
+
+    /**
      * 获取分支列表（带缓存）
      */
     async getBranches(forceRefresh: boolean = false): Promise<BranchSummary> {
@@ -1003,6 +1023,30 @@ export class GitService {
     }
 
     /**
+     * 获取指定分支的提交历史（带缓存）
+     * 仅用于 Git Graph 视图的按分支过滤场景
+     */
+    async getLogForBranch(maxCount: number = 100, branch: string, forceRefresh: boolean = false): Promise<LogResult> {
+        const normalizedBranch = branch || 'HEAD';
+        const cacheKey = `log-branch:${normalizedBranch}:${maxCount}`;
+
+        if (!forceRefresh) {
+            const cached = this.getCached<LogResult>(cacheKey);
+            if (cached) {
+                return cached;
+            }
+        }
+
+        const git = this.ensureGit();
+        const result = await (git.log as unknown as (options: any, customArgs?: string[]) => Promise<LogResult>)({
+            maxCount
+        }, [normalizedBranch]);
+
+        this.setCache(cacheKey, result, this.CACHE_TTL.log);
+        return result;
+    }
+
+    /**
      * 添加文件到暂存区
      */
     async add(files: string | string[]): Promise<void> {
@@ -1092,7 +1136,14 @@ export class GitService {
                 git.raw(['show', '--numstat', '--format=', commitHash])
             ]);
 
-            const statusMap = new Map<string, string>();
+            interface StatusInfo {
+                raw: string; // 原始状态字符串，例如 M / A / D / R100
+                type: string; // 简化类型：取 raw 的首字母
+                oldPath?: string; // 重命名前的路径
+                newPath: string;  // 重命名后的路径（或当前路径）
+            }
+
+            const statusMap = new Map<string, StatusInfo>();
             statusOutput.split('\n').forEach(line => {
                 const trimmed = line.trim();
                 if (!trimmed) {
@@ -1102,13 +1153,34 @@ export class GitService {
                 if (parts.length === 0) {
                     return;
                 }
-                const status = parts[0];
-                const path = parts.length > 2 && status.startsWith('R')
-                    ? parts[2]
-                    : parts[1] || '';
-                if (path) {
-                    statusMap.set(path.replace(/\\/g, '/'), status);
+                const rawStatus = parts[0];
+                const type = rawStatus.charAt(0) || 'M';
+
+                let oldPath: string | undefined;
+                let newPath: string | undefined;
+
+                if ((type === 'R' || type === 'C') && parts.length >= 3) {
+                    // 重命名 / 复制：<status> <old> <new>
+                    oldPath = parts[1];
+                    newPath = parts[2];
+                } else {
+                    // 普通增删改：<status> <path>
+                    newPath = parts[1];
                 }
+
+                if (!newPath) {
+                    return;
+                }
+
+                const normNew = newPath.replace(/\\/g, '/');
+                const normOld = oldPath ? oldPath.replace(/\\/g, '/') : undefined;
+
+                statusMap.set(normNew, {
+                    raw: rawStatus,
+                    type,
+                    oldPath: normOld,
+                    newPath: normNew
+                });
             });
 
             const statsMap = new Map<string, { additions?: number; deletions?: number }>();
@@ -1125,6 +1197,7 @@ export class GitService {
                 const del = parseInt(parts[1], 10);
                 let path = parts.slice(2).join('\t').trim();
                 if (path.includes(' => ')) {
+                    // numstat 在重命名时使用 old => new 语法，这里只保留新路径以便与 statusMap 对齐
                     path = path.split(' => ').pop() || path;
                 }
                 path = path.replace(/\"/g, '').replace(/\\/g, '/');
@@ -1141,14 +1214,18 @@ export class GitService {
                 const stats = statsMap.get(p);
                 const additions = stats?.additions;
                 const deletions = stats?.deletions;
+                const statusInfo = statusMap.get(p);
                 files.push({
                     path: p,
-                    status: statusMap.get(p) || 'M',
+                    status: statusInfo?.raw || 'M',
                     additions,
                     deletions,
                     changes: typeof additions === 'number' && typeof deletions === 'number'
                         ? additions + deletions
-                        : undefined
+                        : undefined,
+                    oldPath: statusInfo?.oldPath,
+                    newPath: statusInfo?.newPath || p,
+                    type: statusInfo?.type
                 });
             });
 

@@ -28,6 +28,8 @@ interface WebviewMessage {
     state?: unknown;
     x?: number;
     y?: number;
+    branchFilter?: string | null;
+    showRemoteBranches?: boolean;
     [key: string]: unknown;
 }
 
@@ -51,6 +53,10 @@ export class DashboardPanel {
     private _lastWebviewState: unknown = null;
     // 避免重复触发检出分支操作的标记
     private _checkoutBranchInProgress = false;
+
+    // Git Graph 过滤状态（由 Webview 传入）
+    private _gitGraphBranchFilter: string | null = null;
+    private _gitGraphShowRemoteBranches: boolean = true;
 
     public static createOrShow(extensionUri: vscode.Uri, gitService: GitService) {
         const column = vscode.window.activeTextEditor
@@ -188,6 +194,20 @@ export class DashboardPanel {
                                 vscode.window.showErrorMessage(`清空分支图缓存失败: ${errorMessage}`);
                             }
                             break;
+                        case 'setGitGraphFilter': {
+                            const branchFilter = (message as WebviewMessage).branchFilter;
+                            const showRemoteBranches = (message as WebviewMessage).showRemoteBranches;
+
+                            this._gitGraphBranchFilter = typeof branchFilter === 'string' && branchFilter.length > 0
+                                ? branchFilter
+                                : null;
+                            if (typeof showRemoteBranches === 'boolean') {
+                                this._gitGraphShowRemoteBranches = showRemoteBranches;
+                            }
+
+                            await this._sendGitData(true);
+                            break;
+                        }
                         case 'initRepository':
                             try {
                                 // 执行初始化命令（命令内部会记录命令历史）
@@ -248,7 +268,10 @@ export class DashboardPanel {
                                 await this._openCommitDiff(
                                     message.commitHash as string,
                                     typeof message.parentHash === 'string' ? message.parentHash : undefined,
-                                    message.filePath as string
+                                    message.filePath as string,
+                                    typeof (message as any).oldPath === 'string' ? (message as any).oldPath as string : undefined,
+                                    typeof (message as any).newPath === 'string' ? (message as any).newPath as string : undefined,
+                                    typeof (message as any).changeType === 'string' ? (message as any).changeType as string : undefined
                                 );
                             }
                             break;
@@ -970,6 +993,15 @@ export class DashboardPanel {
             }
 
             const fileUri = vscode.Uri.file(path.join(workspaceRoot, filePath));
+            // 在通过 git 虚拟文件系统打开之前，先检查该提交中是否存在该文件
+            const exists = await this.gitService.fileExistsInCommit(commitHash, filePath);
+            if (!exists) {
+                vscode.window.showWarningMessage(
+                    `提交 ${commitHash.slice(0, 7)} 中不存在文件 "${filePath}"，可能在此提交尚未创建或已被删除/重命名。`
+                );
+                return;
+            }
+
             const targetUri = this._toGitUri(fileUri, commitHash);
             const document = await vscode.workspace.openTextDocument(targetUri);
             await vscode.window.showTextDocument(document, { preview: true });
@@ -982,7 +1014,14 @@ export class DashboardPanel {
     /**
      * 打开提交文件差异视图
      */
-    private async _openCommitDiff(commitHash: string, parentHash: string | undefined, filePath: string) {
+    private async _openCommitDiff(
+        commitHash: string,
+        parentHash: string | undefined,
+        filePath: string,
+        oldPath?: string,
+        newPath?: string,
+        changeType?: string
+    ) {
         try {
             const workspaceRoot = this.gitService.getWorkspaceRoot();
             if (!workspaceRoot) {
@@ -990,27 +1029,59 @@ export class DashboardPanel {
                 return;
             }
 
-            const fileUri = vscode.Uri.file(path.join(workspaceRoot, filePath));
+            const normalizedType = (changeType || '').trim().toUpperCase();
+            const isRenameOrCopy = normalizedType.startsWith('R') || normalizedType.startsWith('C');
+
+            // 当前提交中使用的新路径（如果有），否则使用原始 filePath
+            const currentPath = (newPath || filePath).replace(/\\/g, '/');
+
+            // 父提交中使用的路径：
+            // - 对于重命名/复制，优先使用 oldPath
+            // - 其它情况使用 currentPath
+            const parentPath = (isRenameOrCopy && oldPath ? oldPath : currentPath).replace(/\\/g, '/');
+
+            const currentFileUri = vscode.Uri.file(path.join(workspaceRoot, currentPath));
             const fromRef = parentHash?.trim();
 
-            // 检查是否是新增文件（前端会发送 'EMPTY' 标记）
-            const isAdded = fromRef === 'EMPTY';
+            // 检查是否是新增文件（前端会发送 'EMPTY' 标记，或没有父提交）
+            let isAdded = fromRef === 'EMPTY' || !fromRef;
+
+            // 先检查当前提交中是否存在该文件（使用 currentPath），避免构造指向不存在文件的 git: URI
+            const existsInCurrent = await this.gitService.fileExistsInCommit(commitHash, currentPath);
+            if (!existsInCurrent) {
+                vscode.window.showWarningMessage(
+                    `提交 ${commitHash.slice(0, 7)} 中不存在文件 "${currentPath}"，可能在此提交尚未创建或已被删除/重命名。`
+                );
+                return;
+            }
+
+            // 对于有父提交的普通修改 / 删除等情况，也检查父提交中该文件是否存在
+            if (!isAdded && fromRef) {
+                const existsInParent = await this.gitService.fileExistsInCommit(fromRef, parentPath);
+                if (!existsInParent) {
+                    // 父提交中不存在该路径，但当前提交中存在：
+                    // 将其视为“相对于父提交新增”的文件，展示从空到当前版本的 diff，
+                    // 而不是直接报错或仅提示。
+                    isAdded = true;
+                }
+            }
 
             let leftUri: vscode.Uri;
             let title: string;
 
-            const rightUri = this._toGitUri(fileUri, commitHash);
+            const rightUri = this._toGitUri(currentFileUri, commitHash);
 
             if (isAdded) {
                 // 对于新增的文件，左侧是一个代表空内容的 untitled 文件
                 // 使用 path.sep 确保跨平台兼容性
-                const untitledPath = path.join(workspaceRoot, filePath);
+                const untitledPath = path.join(workspaceRoot, currentPath);
                 leftUri = vscode.Uri.parse(`untitled:${untitledPath}`);
-                title = `${path.basename(filePath)} (Added in ${commitHash.slice(0, 7)})`;
+                title = `${path.basename(currentPath)} (Added in ${commitHash.slice(0, 7)})`;
             } else {
                 // 对于修改或删除的文件，左侧是父提交中的版本
-                leftUri = this._toGitUri(fileUri, fromRef!);
-                title = `${path.basename(filePath)} (${fromRef!} ↔ ${commitHash.slice(0, 7)})`;
+                const leftFileUri = vscode.Uri.file(path.join(workspaceRoot, parentPath));
+                leftUri = this._toGitUri(leftFileUri, fromRef!);
+                title = `${path.basename(currentPath)} (${fromRef!} ↔ ${commitHash.slice(0, 7)})`;
             }
 
             await vscode.commands.executeCommand('vscode.diff', leftUri, rightUri, title);
@@ -1250,7 +1321,9 @@ export class DashboardPanel {
                 this.gitService.getBranches(),
                 // 初始加载使用足够的提交数量，确保与分支图数据对齐，避免出现"无提交信息"
                 // 使用 800 个提交，与 BRANCH_GRAPH_MAX_COMMITS 保持一致
-                this.gitService.getLog(800, undefined, forceRefreshLog),
+                this._gitGraphBranchFilter
+                    ? this.gitService.getLogForBranch(800, this._gitGraphBranchFilter, forceRefreshLog)
+                    : this.gitService.getLog(800, undefined, forceRefreshLog),
                 this.gitService.getRemotes(),
                 this.gitService.getConflicts(),
                 this.gitService.getTags()
@@ -1329,7 +1402,9 @@ export class DashboardPanel {
                         heavyTasks.push(
                             // 获取更大的提交窗口并强制刷新，确保包含最新提交信息
                             // 使用 800 个提交，确保与分支图的最大提交数一致，避免出现"无提交信息"
-                            this.gitService.getLog(800, undefined, true)
+                            this._gitGraphBranchFilter
+                                ? this.gitService.getLogForBranch(800, this._gitGraphBranchFilter, true)
+                                : this.gitService.getLog(800, undefined, true)
                         );
                     }
 
@@ -2289,6 +2364,9 @@ export class DashboardPanel {
         const contextMenuCssUri = webview.asWebviewUri(
             vscode.Uri.joinPath(this._extensionUri, 'media', 'styles', 'context-menu.css')
         );
+        const dropdownCssUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'styles', 'dropdown.css')
+        );
         const cspSource = webview.cspSource;
         return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -2300,6 +2378,7 @@ export class DashboardPanel {
     <link rel="stylesheet" href="${cssUri}">
     <link rel="stylesheet" href="${gitGraphCssUri}">
     <link rel="stylesheet" href="${contextMenuCssUri}">
+    <link rel="stylesheet" href="${dropdownCssUri}">
     <style>
         body {
             margin: 0;

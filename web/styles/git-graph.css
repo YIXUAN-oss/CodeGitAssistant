@@ -13,6 +13,14 @@
     overflow: visible;
 }
 
+/* Git Graph 外层容器：自身不滚动，只让内部表格区域滚动，避免出现双滚动条 */
+.git-graph-view {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
 #commitGraph circle {
     pointer-events: all;
     cursor: pointer;
@@ -46,6 +54,91 @@
 #commitGraph path.line {
     fill: none;
     stroke-width: 2;
+}
+
+/* 顶部工具栏（Git Graph 控件区域） */
+.git-graph-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.35);
+    background: var(--vscode-sideBar-background);
+    box-sizing: border-box;
+    z-index: 30;
+}
+
+.git-graph-toolbar-center {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    max-width: 960px;
+    width: 100%;
+}
+
+.git-graph-toolbar-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    color: var(--vscode-foreground);
+}
+
+.git-graph-toolbar-label {
+    white-space: nowrap;
+}
+
+.git-graph-branch-select {
+    min-width: 180px;
+    max-width: 260px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid rgba(128, 128, 128, 0.7);
+    background-color: var(--vscode-editor-background);
+    color: var(--vscode-foreground);
+    font-size: 14px;
+}
+
+.git-graph-toolbar-checkbox {
+    cursor: pointer;
+}
+
+.git-graph-toolbar-checkbox input[type='checkbox'] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.git-graph-toolbar-checkbox-box {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid rgba(128, 128, 128, 0.7);
+    box-sizing: border-box;
+    margin-right: 2px;
+    /* 使用半透明灰色背景，避免在侧边栏背景上出现明显的白色闪烁 */
+    background: rgba(128, 128, 128, 0.1);
+}
+
+.git-graph-toolbar-checkbox:hover .git-graph-toolbar-checkbox-box {
+    background: rgba(128, 128, 128, 0.2);
+}
+
+.git-graph-toolbar-checkbox input[type='checkbox']:checked+.git-graph-toolbar-checkbox-box {
+    /* 选中时只强调边框颜色，保持背景为灰色，减少强烈跳变 */
+    border-color: var(--vscode-textLink-foreground);
+}
+
+.git-graph-toolbar-checkbox input[type='checkbox']:checked+.git-graph-toolbar-checkbox-box::after {
+    content: '';
+    display: block;
+    width: 8px;
+    height: 8px;
+    margin: 2px;
+    /* 使用前景色的小方块作为勾选标记 */
+    background: var(--vscode-editor-foreground);
 }
 
 /* Commit Table */
@@ -94,6 +187,11 @@
 
 #commitTable tr.commit td {
     cursor: pointer;
+}
+
+/* 被分支过滤排除的行：完全隐藏，不参与显示 */
+#commitTable tr.commit.branch-filter-excluded {
+    display: none;
 }
 
 #commitTable th {
@@ -158,6 +256,22 @@
 
 #commitTable tr.commit.mute .description-text {
     opacity: 0.5;
+}
+
+/* Commit details file stats (+N / -M) */
+.cdv-file-stats {
+    margin-left: 8px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.cdv-file-stats-add {
+    color: var(--vscode-gitDecoration-addedResourceForeground, #81b88b);
+    margin-right: 4px;
+}
+
+.cdv-file-stats-del {
+    color: var(--vscode-gitDecoration-deletedResourceForeground, #c74e39);
 }
 
 /* Commit Emphasis */

@@ -44,6 +44,12 @@ export interface CommitFileChange {
     additions?: number;
     deletions?: number;
     changes?: number;
+    /** 提交前的路径（重命名 / 复制场景） */
+    oldPath?: string;
+    /** 提交后的路径（通常与 path 一致，重命名时为新路径） */
+    newPath?: string;
+    /** 简化的变更类型：A/M/D/R/C/T/U 等 */
+    type?: string;
 }
 
 export interface CommitInfo {
